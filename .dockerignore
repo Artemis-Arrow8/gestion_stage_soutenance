@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+**/**pycache**
+**/*.py[cod]
+**/*.sqlite3
+**/.DS_Store
+backend/.venv
+backend/venv
+frontend/.dart_tool
+frontend/build
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies

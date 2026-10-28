@@ -11,7 +11,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 from pathlib import Path
-
+import os
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -20,13 +20,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-h_iy3&hac4uatjh9kip(tx0-fseu95&pc#)@!$-0(fg2y(h&&#'
+SECRET_KEY = os.getenv(
+    "DJANGO_SECRET_KEY",
+    "cle-locale-temporaire-a-remplacer"
+)# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() == "true"
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = []
-
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv(
+        "DJANGO_ALLOWED_HOSTS",
+        "localhost,127.0.0.1"
+    ).split(",")
+    if host.strip()
+]
 
 # Application definition
 
@@ -73,18 +80,31 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
-
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'gestion_stage_soutenance',
-        'USER': 'postgres',
-        'PASSWORD': 'helene',
-        'HOST': 'localhost',
-        'PORT': '5432',
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv(
+            "POSTGRES_DB",
+            "gestion_stage_soutenance"
+        ),
+        "USER": os.getenv(
+            "POSTGRES_USER",
+            "gestion_user"
+        ),
+        "PASSWORD": os.getenv(
+            "POSTGRES_PASSWORD",
+            ""
+        ),
+        "HOST": os.getenv(
+            "DB_HOST",
+            "localhost"
+        ),
+        "PORT": os.getenv(
+            "DB_PORT",
+            "5432"
+        ),
     }
 }
-
 
 # Password validation
 # https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
