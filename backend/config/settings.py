@@ -44,7 +44,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'rest_framework',  
+    'rest_framework',
+    'django.contrib.postgres',  # champs PostgreSQL (DateTimeRangeField pour tstzrange)
     'api',
 ]
 
@@ -93,7 +94,7 @@ DATABASES = {
         ),
         "PASSWORD": os.getenv(
             "POSTGRES_PASSWORD",
-            ""
+            "mariam"
         ),
         "HOST": os.getenv(
             "DB_HOST",
@@ -136,6 +137,11 @@ USE_I18N = True
 
 USE_TZ = True
 
+
+# Tests
+# Exécuteur personnalisé : charge database/schema.sql dans la base de test
+# (les modèles sont managed=False, Django ne crée donc pas les tables lui-même).
+TEST_RUNNER = 'config.test_runner.SchemaTestRunner'
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
