@@ -18,11 +18,11 @@ class _LoginViewState extends State<LoginView> {
   // Clé globale pour la validation du formulaire
   final _formKey = GlobalKey<FormState>();
 
-  // Couleurs de la charte graphique : Noir, Or et Blanc
+  // Couleurs de la charte graphique : Blanc, Or et Noir
   final Color _goldColor = const Color(0xFFD4AF37); // Or classique
   final Color _cardColor = const Color(
-    0xFF1E1E1E,
-  ); // Noir adouci pour les conteneurs
+    0xFFF5F5F5,
+  ); // Gris très clair pour distinguer les champs du fond blanc
 
   @override
   void dispose() {
@@ -50,7 +50,7 @@ class _LoginViewState extends State<LoginView> {
     final authProvider = Provider.of<AuthProvider>(context);
 
     return Scaffold(
-      backgroundColor: Colors.black, // Fond noir pur
+      backgroundColor: Colors.white, // Fond blanc
       body: SafeArea(
         child: Center(
           // SingleChildScrollView combiné à ConstrainedBox et IntrinsicHeight
@@ -75,24 +75,24 @@ class _LoginViewState extends State<LoginView> {
                       Icon(Icons.school_rounded, size: 80, color: _goldColor),
                       const SizedBox(height: 16),
 
-                      // Titre de l'application en Blanc pur
+                      // Titre de l'application en Noir pour contraster avec le fond blanc
                       const Text(
                         'SGSUS',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 32,
                           fontWeight: FontWeight.bold,
-                          color: Colors.white,
+                          color: Colors.black,
                           letterSpacing: 1.5,
                         ),
                       ),
                       const SizedBox(height: 8),
 
-                      // Sous-titre explicatif en gris clair
+                      // Sous-titre explicatif en gris foncé sur fond blanc
                       const Text(
                         'Gestion des Stages et Soutenances',
                         textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 14, color: Colors.white70),
+                        style: TextStyle(fontSize: 14, color: Colors.black54),
                       ),
                       const SizedBox(height: 40),
 
@@ -121,10 +121,10 @@ class _LoginViewState extends State<LoginView> {
                       TextFormField(
                         key: const Key('login-username'),
                         controller: _usernameController,
-                        style: const TextStyle(color: Colors.white),
+                        style: const TextStyle(color: Colors.black),
                         decoration: InputDecoration(
                           labelText: "Identifiant fourni par l'établissement",
-                          labelStyle: const TextStyle(color: Colors.white60),
+                          labelStyle: const TextStyle(color: Colors.black54),
                           prefixIcon: Icon(
                             Icons.person_outline,
                             color: _goldColor,
@@ -157,10 +157,10 @@ class _LoginViewState extends State<LoginView> {
                         key: const Key('login-password'),
                         controller: _passwordController,
                         obscureText: true,
-                        style: const TextStyle(color: Colors.white),
+                        style: const TextStyle(color: Colors.black),
                         decoration: InputDecoration(
                           labelText: 'Mot de passe',
-                          labelStyle: const TextStyle(color: Colors.white60),
+                          labelStyle: const TextStyle(color: Colors.black54),
                           prefixIcon: Icon(
                             Icons.lock_outline,
                             color: _goldColor,
@@ -188,7 +188,7 @@ class _LoginViewState extends State<LoginView> {
                       ),
                       const SizedBox(height: 28),
 
-                      // Bouton de connexion couleur Or avec texte Noir
+                      // Bouton de connexion doré ; le texte noir assure un bon contraste.
                       SizedBox(
                         height: 52,
                         child: ElevatedButton(
