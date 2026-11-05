@@ -9,46 +9,54 @@ https://docs.djangoproject.com/en/6.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
-
+from datetime import timedelta
 from pathlib import Path
 import os
+from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR.parent / ".env")
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv(
-    "DJANGO_SECRET_KEY",
-    "cle-locale-temporaire-a-remplacer"
-)# SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() == "true"
+
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured("DJANGO_SECRET_KEY doit être défini en production.")
+    SECRET_KEY = "dev-only-key-not-for-production-use"
 
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.getenv(
         "DJANGO_ALLOWED_HOSTS",
-        "localhost,127.0.0.1"
+        "localhost,127.0.0.1,192.168.1.7"
     ).split(",")
     if host.strip()
 ]
-
 # Application definition
 
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
+    'django.contrib.postgres',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'corsheaders',
     'rest_framework',  
+    'rest_framework_simplejwt.token_blacklist',
     'api',
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -56,6 +64,10 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+]
+
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -83,26 +95,11 @@ WSGI_APPLICATION = 'config.wsgi.application'
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv(
-            "POSTGRES_DB",
-            "gestion_stage_soutenance"
-        ),
-        "USER": os.getenv(
-            "POSTGRES_USER",
-            "gestion_user"
-        ),
-        "PASSWORD": os.getenv(
-            "POSTGRES_PASSWORD",
-            ""
-        ),
-        "HOST": os.getenv(
-            "DB_HOST",
-            "localhost"
-        ),
-        "PORT": os.getenv(
-            "DB_PORT",
-            "5432"
-        ),
+        "NAME": os.getenv("POSTGRES_DB", "gestion_stage_soutenance"),
+        "USER": os.getenv("POSTGRES_USER", "postgres"),
+        "PASSWORD": os.getenv("POSTGRES_PASSWORD", ""),
+        "HOST": os.getenv("DB_HOST", "localhost"),
+        "PORT": os.getenv("DB_PORT", "5432"),
     }
 }
 
@@ -150,4 +147,17 @@ MAILERS = {
     'default': {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
+}
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ],
+}
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=5),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
 }

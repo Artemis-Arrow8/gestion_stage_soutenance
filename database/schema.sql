@@ -1,3 +1,7 @@
+-- DEPRECATED: les migrations Django font autorité pour le schéma.
+-- Ce script est destructif (il supprime des tables) et ne doit pas être exécuté.
+-- Utiliser `python manage.py migrate` après avoir sauvegardé toute base existante.
+
 -- Suppression préalable pour les tests (ordre inverse des dépendances)
 DROP TABLE IF EXISTS assessment CASCADE;
 DROP TABLE IF EXISTS resource_booking CASCADE;

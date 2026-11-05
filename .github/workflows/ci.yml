@@ -10,9 +10,45 @@ on:
   workflow_dispatch:
 
 jobs:
-  verification:
-    name: Vérification Django et Docker
+  frontend:
+    name: Vérification Flutter
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Analyser et tester Flutter
+        run: |
+          cd frontend
+          flutter pub get
+          flutter analyze
+          flutter test
+
+  verification:
+    name: Vérification Django, tests et Docker
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: gestion_stage_soutenance
+          POSTGRES_USER: gestion_user
+          POSTGRES_PASSWORD: ci-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gestion_user -d gestion_stage_soutenance"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     defaults:
       run:
@@ -34,7 +70,7 @@ jobs:
 
       - name: Vérifier la configuration Django
         env:
-          DJANGO_SECRET_KEY: ci-test-key-not-for-production
+          DJANGO_SECRET_KEY: ci-only-jwt-signing-key-not-for-production
           DJANGO_DEBUG: "True"
           POSTGRES_DB: gestion_stage_soutenance
           POSTGRES_USER: gestion_user
@@ -42,6 +78,28 @@ jobs:
           DB_HOST: localhost
           DB_PORT: "5432"
         run: python manage.py check
+
+      - name: Exécuter les tests backend
+        env:
+          DJANGO_SECRET_KEY: ci-only-jwt-signing-key-not-for-production
+          DJANGO_DEBUG: "True"
+          POSTGRES_DB: gestion_stage_soutenance
+          POSTGRES_USER: gestion_user
+          POSTGRES_PASSWORD: ci-test-password
+          DB_HOST: localhost
+          DB_PORT: "5432"
+        run: python manage.py test
+
+      - name: Vérifier les migrations
+        env:
+          DJANGO_SECRET_KEY: ci-only-jwt-signing-key-not-for-production
+          DJANGO_DEBUG: "True"
+          POSTGRES_DB: gestion_stage_soutenance
+          POSTGRES_USER: gestion_user
+          POSTGRES_PASSWORD: ci-test-password
+          DB_HOST: localhost
+          DB_PORT: "5432"
+        run: python manage.py makemigrations --check --dry-run
 
       - name: Construire l'image Docker
         run: docker build -t gestion-stage-soutenance:ci -f Dockerfile .
