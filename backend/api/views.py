@@ -23,6 +23,15 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from django.contrib.auth import authenticate, get_user_model
+from rest_framework.views import APIView
+from rest_framework import status
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError
+
+from api.roles import get_user_role
+
 from api.models import (
     Campaign,
     Defense,
@@ -280,3 +289,136 @@ class DefenseViewSet(viewsets.ModelViewSet):
                 serializer.save()
         except IntegrityError as erreur:
             raise conflicts.traduire_integrity_error(erreur)
+
+# =====================================================
+# AUTHENTIFICATION DES UTILISATEURS
+# =====================================================
+
+DjangoUser = get_user_model()
+
+
+def construire_profil(user):
+    """Construit le profil envoyé à Flutter."""
+
+    return {
+        "id": user.pk,
+        "student_number": "",
+        "username": user.get_username(),
+        "full_name": (
+            f"{user.first_name} {user.last_name}".strip()
+            or user.get_username()
+        ),
+        "email": user.email,
+        "role": get_user_role(user),
+    }
+
+
+class LoginView(APIView):
+    """Connexion avec identifiant et mot de passe."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+
+        username = request.data.get("username")
+        password = request.data.get("password")
+
+        if not username or not password:
+            return Response(
+                {"error": "Identifiant et mot de passe obligatoires."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = authenticate(
+            request,
+            username=username.strip(),
+            password=password
+        )
+
+        if user is None:
+            return Response(
+                {"error": "Identifiant ou mot de passe incorrect."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        if not user.is_active:
+            return Response(
+                {"error": "Ce compte est désactivé."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        role = get_user_role(user)
+
+        if role is None:
+            return Response(
+                {"error": "Aucun rôle n'est associé à ce compte."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        refresh = RefreshToken.for_user(user)
+
+        return Response({
+            "message": "Connexion réussie",
+            "user": construire_profil(user),
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+        }, status=status.HTTP_200_OK)
+
+
+class UserProfileView(APIView):
+    """Récupération du profil connecté."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+
+        role = get_user_role(request.user)
+
+        if role is None:
+            return Response(
+                {"error": "Aucun rôle associé à ce compte."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        return Response({
+            "user": construire_profil(request.user)
+        })
+
+
+class LogoutView(APIView):
+    """Déconnexion et révocation du jeton de renouvellement."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+
+        raw_token = request.data.get("refresh")
+
+        if not raw_token:
+            return Response(
+                {"error": "Jeton de renouvellement obligatoire."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            refresh = RefreshToken(raw_token)
+
+            if str(refresh.get("user_id")) != str(request.user.pk):
+                return Response(
+                    {"error": "Ce jeton n'appartient pas à ce compte."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            refresh.blacklist()
+
+        except TokenError:
+            return Response(
+                {"error": "Jeton invalide ou déjà révoqué."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response({
+            "message": "Déconnexion réussie."
+        })
+        
