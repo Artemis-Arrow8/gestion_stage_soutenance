@@ -22,6 +22,7 @@ void main() {
       client: MockClient((request) async {
         expect(request.method, 'POST');
         expect(request.url.path, '/api/login/');
+
         return http.Response(
           jsonEncode({
             'password': ['Ce champ est invalide.'],
@@ -48,24 +49,29 @@ void main() {
     () async {
       final previousPlatform = FlutterSecureStoragePlatform.instance;
       final values = <String, String>{};
+
       FlutterSecureStoragePlatform.instance = TestFlutterSecureStoragePlatform(
         values,
       );
+
       addTearDown(() {
         FlutterSecureStoragePlatform.instance = previousPlatform;
       });
 
       final storage = SecureAuthStorage();
+
       await storage.saveTokens('access-test', 'refresh-test');
 
       expect(values, {
         'sgsus_access_token': 'access-test',
         'sgsus_refresh_token': 'refresh-test',
       });
+
       expect(await storage.readAccessToken(), 'access-test');
       expect(await storage.readRefreshToken(), 'refresh-test');
 
       await storage.clearTokens();
+
       expect(values, isEmpty);
       expect(await storage.readAccessToken(), isNull);
       expect(await storage.readRefreshToken(), isNull);
@@ -76,8 +82,10 @@ void main() {
     WidgetTester tester,
   ) async {
     final provider = _createProvider();
+
     await tester.pumpWidget(MyApp(authProvider: provider));
     await tester.pumpAndSettle();
+
     await tester.ensureVisible(find.text('Se connecter'));
     await tester.tap(find.text('Se connecter'));
     await tester.pumpAndSettle();
@@ -95,10 +103,13 @@ void main() {
     WidgetTester tester,
   ) async {
     final provider = _createProvider(failLogin: true);
+
     await tester.pumpWidget(MyApp(authProvider: provider));
     await tester.pumpAndSettle();
+
     await tester.enterText(find.byKey(const Key('login-username')), 'invalide');
     await tester.enterText(find.byKey(const Key('login-password')), 'faux');
+
     await tester.tap(find.text('Se connecter'));
     await tester.pumpAndSettle();
 
@@ -106,6 +117,7 @@ void main() {
     expect(find.textContaining('Tableau de bord'), findsNothing);
   });
 
+  // Vérification de la redirection selon chaque rôle.
   for (final entry in const {
     'admin': 'Tableau de bord — Administration',
     'responsible': 'Tableau de bord — Pédagogie',
@@ -116,16 +128,20 @@ void main() {
       WidgetTester tester,
     ) async {
       final provider = _createProvider(role: entry.key);
+
       await tester.pumpWidget(MyApp(authProvider: provider));
       await tester.pumpAndSettle();
+
       await tester.enterText(find.byKey(const Key('login-username')), 'compte');
       await tester.enterText(find.byKey(const Key('login-password')), 'secret');
+
       await tester.tap(find.text('Se connecter'));
       await tester.pumpAndSettle();
 
       expect(find.text(entry.value), findsOneWidget);
       expect(find.text('Se connecter'), findsNothing);
-      expect(find.text('Module non intégré'), findsNWidgets(2));
+
+      expect(find.text('Accéder au module'), findsNWidgets(2));
     });
   }
 
@@ -133,18 +149,21 @@ void main() {
     WidgetTester tester,
   ) async {
     final provider = _createProvider();
+
     await tester.pumpWidget(
       ChangeNotifierProvider<AuthProvider>.value(
         value: provider,
         child: const MaterialApp(home: HomeViewForTest()),
       ),
     );
+
     await tester.pumpAndSettle();
 
     expect(
       find.text('Cette session ne donne accès à aucun espace SGSUS.'),
       findsOneWidget,
     );
+
     expect(find.text('Tableau de bord — Étudiant'), findsNothing);
   });
 
@@ -152,6 +171,7 @@ void main() {
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(MyApp(authProvider: _createProvider()));
+
     await tester.pumpAndSettle();
 
     expect(
@@ -160,6 +180,7 @@ void main() {
           .pushNamed('/admin/accounts'),
       throwsA(isA<FlutterError>()),
     );
+
     await tester.pumpAndSettle();
 
     expect(find.text('Se connecter'), findsOneWidget);
@@ -173,10 +194,12 @@ void main() {
       accessToken: 'access-persistant',
       refreshToken: 'refresh-persistant',
     );
+
     final provider = AuthProvider(
       authRepository: _FakeAuthRepository(role: 'supervisor'),
       storage: storage,
     );
+
     await tester.pumpWidget(MyApp(authProvider: provider));
     await tester.pumpAndSettle();
 
@@ -188,14 +211,18 @@ void main() {
     WidgetTester tester,
   ) async {
     final storage = _MemoryAuthStorage();
+
     final loginProvider = AuthProvider(
       authRepository: _FakeAuthRepository(role: 'student'),
       storage: storage,
     );
+
     await tester.pumpWidget(MyApp(authProvider: loginProvider));
     await tester.pumpAndSettle();
+
     await tester.enterText(find.byKey(const Key('login-username')), 'compte');
     await tester.enterText(find.byKey(const Key('login-password')), 'secret');
+
     await tester.tap(find.text('Se connecter'));
     await tester.pumpAndSettle();
 
@@ -203,10 +230,12 @@ void main() {
     expect(storage.refreshToken, 'refresh-test');
 
     await tester.pumpWidget(const SizedBox.shrink());
+
     final restoredProvider = AuthProvider(
       authRepository: _FakeAuthRepository(role: 'student'),
       storage: storage,
     );
+
     await tester.pumpWidget(MyApp(authProvider: restoredProvider));
     await tester.pumpAndSettle();
 
@@ -221,6 +250,7 @@ void main() {
       accessToken: 'access-expiré',
       refreshToken: 'refresh-valide',
     );
+
     final provider = AuthProvider(
       authRepository: _FakeAuthRepository(
         role: 'responsible',
@@ -228,10 +258,12 @@ void main() {
       ),
       storage: storage,
     );
+
     await tester.pumpWidget(MyApp(authProvider: provider));
     await tester.pumpAndSettle();
 
     expect(find.text('Tableau de bord — Pédagogie'), findsOneWidget);
+
     expect(storage.accessToken, 'access-renouvelé');
     expect(storage.refreshToken, 'refresh-renouvelé');
   });
@@ -240,16 +272,21 @@ void main() {
     WidgetTester tester,
   ) async {
     final storage = _MemoryAuthStorage();
+
     final provider = AuthProvider(
       authRepository: _FakeAuthRepository(role: 'student'),
       storage: storage,
     );
+
     await tester.pumpWidget(MyApp(authProvider: provider));
     await tester.pumpAndSettle();
+
     await tester.enterText(find.byKey(const Key('login-username')), 'compte');
     await tester.enterText(find.byKey(const Key('login-password')), 'secret');
+
     await tester.tap(find.text('Se connecter'));
     await tester.pumpAndSettle();
+
     await tester.tap(find.byTooltip('Se déconnecter'));
     await tester.pumpAndSettle();
 
@@ -289,6 +326,7 @@ class _FakeAuthRepository extends AuthRepository {
   final String role;
   final bool failLogin;
   final bool rejectFirstProfile;
+
   var _profileCalls = 0;
 
   Map<String, dynamic> get _profile => {
@@ -308,6 +346,7 @@ class _FakeAuthRepository extends AuthRepository {
         statusCode: 401,
       );
     }
+
     return {
       'user': _profile,
       'access': 'access-test',
@@ -318,9 +357,11 @@ class _FakeAuthRepository extends AuthRepository {
   @override
   Future<Map<String, dynamic>> profile(String accessToken) async {
     _profileCalls++;
+
     if (rejectFirstProfile && _profileCalls == 1) {
       throw const ApiException('Jeton expiré.', statusCode: 401);
     }
+
     return {'user': _profile};
   }
 

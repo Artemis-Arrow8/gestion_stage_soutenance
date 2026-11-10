@@ -23,37 +23,46 @@ class AuthProvider extends ChangeNotifier {
   bool _isLoading = false;
   bool _isInitializing = true;
   bool _isDisposed = false;
+
   Map<String, dynamic>? _user;
   String? _accessToken;
   String? _refreshToken;
   String? _errorMessage;
   Future<void>? _restoreOperation;
 
-  /// Indique si une connexion ou restauration est en cours.
   bool get isLoading => _isLoading;
-
-  /// Indique si la vérification initiale des jetons est terminée.
   bool get isInitializing => _isInitializing;
 
-  /// Retourne le profil renvoyé par l’API Django.
+  /// Profil de l'utilisateur connecté.
   Map<String, dynamic>? get user => _user;
 
-  /// Retourne le jeton à transmettre aux routes protégées.
+  /// Jeton d'accès à transmettre aux routes protégées.
   String? get accessToken => _accessToken;
 
-  /// Retourne le jeton utilisé pour renouveler la session.
+  /// Jeton de renouvellement.
   String? get refreshToken => _refreshToken;
 
-  /// Retourne le rôle SGSUS défini par le serveur.
+  /// Rôle de l'utilisateur connecté.
   String? get role => _user?['role'] as String?;
 
-  /// Retourne le dernier message d’erreur destiné à l’interface.
+  /// Identifiant du dossier de stage de l'étudiant connecté.
+  int? get folderId {
+    final value = _user?['folder_id'];
+
+    if (value is int) return value;
+    if (value is String) return int.tryParse(value);
+
+    return null;
+  }
+
+  /// Statut du dossier de stage.
+  String? get folderStatus => _user?['folder_status'] as String?;
+
   String? get errorMessage => _errorMessage;
 
-  /// Indique si un profil authentifié est actuellement disponible.
   bool get isAuthenticated => _user != null;
 
-  /// Vérifie les jetons persistés et renouvelle la session si nécessaire.
+  /// Vérifie les jetons persistés et restaure la session.
   Future<void> restoreSession() {
     return _restoreOperation ??= _restoreSession();
   }
@@ -61,9 +70,11 @@ class AuthProvider extends ChangeNotifier {
   Future<void> _restoreSession() async {
     _isInitializing = true;
     _notifyListeners();
+
     try {
       final accessToken = await _storage.readAccessToken();
       final refreshToken = await _storage.readRefreshToken();
+
       if (accessToken == null || refreshToken == null) {
         await _storage.clearTokens();
         return;
@@ -71,6 +82,7 @@ class AuthProvider extends ChangeNotifier {
 
       _accessToken = accessToken;
       _refreshToken = refreshToken;
+
       try {
         await _loadProfile(accessToken);
       } on ApiException catch (error) {
@@ -78,10 +90,12 @@ class AuthProvider extends ChangeNotifier {
           await _clearSession();
           return;
         }
+
         if (error.statusCode != 401) {
           _errorMessage = error.message;
           return;
         }
+
         await _refreshAndLoadProfile(refreshToken);
       }
     } on ApiException catch (error) {
@@ -101,7 +115,7 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Échange les identifiants saisis contre la session réelle de l’API.
+  /// Connecte l'utilisateur avec les identifiants fournis.
   Future<bool> login(String username, String password) async {
     _isLoading = true;
     _errorMessage = null;
@@ -109,16 +123,20 @@ class AuthProvider extends ChangeNotifier {
 
     try {
       final response = await _authRepository.login(username, password);
+
       final user = _validatedUser(response['user']);
       final accessToken = _requiredToken(response['access'], 'accès');
       final refreshToken = _requiredToken(
         response['refresh'],
         'renouvellement',
       );
+
       await _storage.saveTokens(accessToken, refreshToken);
+
       _user = user;
       _accessToken = accessToken;
       _refreshToken = refreshToken;
+
       return true;
     } on ApiException catch (error) {
       _errorMessage = error.message;
@@ -135,9 +153,10 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Renouvelle les jetons puis recharge le profil courant.
+  /// Renouvelle les jetons et recharge le profil.
   Future<bool> refreshSession() async {
     final refreshToken = _refreshToken;
+
     if (refreshToken == null) {
       await _clearSession();
       _notifyListeners();
@@ -145,12 +164,14 @@ class AuthProvider extends ChangeNotifier {
     }
 
     var refreshed = false;
+
     try {
       await _refreshAndLoadProfile(refreshToken);
       _errorMessage = null;
       refreshed = true;
     } on ApiException catch (error) {
       _errorMessage = error.message;
+
       if (error.statusCode == 401 || error.statusCode == 403) {
         await _clearSession();
       }
@@ -162,14 +183,17 @@ class AuthProvider extends ChangeNotifier {
     } finally {
       _notifyListeners();
     }
+
     return refreshed;
   }
 
-  /// Révoque la session sur le serveur et efface toujours les jetons locaux.
+  /// Déconnecte l'utilisateur et efface les jetons locaux.
   Future<bool> logout() async {
     var revoked = true;
+
     final accessToken = _accessToken;
     final refreshToken = _refreshToken;
+
     if (accessToken != null && refreshToken != null) {
       try {
         await _authRepository.logout(accessToken, refreshToken);
@@ -191,28 +215,37 @@ class AuthProvider extends ChangeNotifier {
       _errorMessage =
           'Impossible d’effacer les jetons de cet appareil : $error';
     }
+
     _user = null;
     _accessToken = null;
     _refreshToken = null;
+
     _notifyListeners();
+
     return revoked;
   }
 
   Future<void> _refreshAndLoadProfile(String refreshToken) async {
     final response = await _authRepository.refresh(refreshToken);
+
     final accessToken = _requiredToken(response['access'], 'accès');
     final rotatedRefresh = response['refresh'];
+
     final nextRefresh = rotatedRefresh == null
         ? refreshToken
         : _requiredToken(rotatedRefresh, 'renouvellement');
+
     await _storage.saveTokens(accessToken, nextRefresh);
+
     _accessToken = accessToken;
     _refreshToken = nextRefresh;
+
     await _loadProfile(accessToken);
   }
 
   Future<void> _loadProfile(String accessToken) async {
     final response = await _authRepository.profile(accessToken);
+
     _user = _validatedUser(response['user']);
     _accessToken = accessToken;
   }
@@ -225,6 +258,7 @@ class AuthProvider extends ChangeNotifier {
         'Le profil renvoyé par le serveur est incomplet ou possède un rôle inconnu.',
       );
     }
+
     return Map<String, dynamic>.from(value);
   }
 
@@ -234,11 +268,13 @@ class AuthProvider extends ChangeNotifier {
         'Le jeton d’$type renvoyé par le serveur est invalide.',
       );
     }
+
     return value;
   }
 
   Future<void> _clearSession() async {
     await _storage.clearTokens();
+
     _user = null;
     _accessToken = null;
     _refreshToken = null;

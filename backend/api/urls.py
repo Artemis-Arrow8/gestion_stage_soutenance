@@ -1,6 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
+from .documents.views import DocumentUploadView, DocumentDownloadView
 from .views import (
     CampaignViewSet, StudentViewSet, InternshipFolderViewSet,
     DocumentVersionViewSet, ReviewViewSet, JuryViewSet,
@@ -26,4 +27,6 @@ urlpatterns = [
     path('logout/', LogoutView.as_view(), name='api-logout'),
     path('profile/', UserProfileView.as_view(), name='api-profile'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
+    path('documents/upload/', DocumentUploadView.as_view(), name='document-upload'),
+    path('documents/download/<int:document_id>/', DocumentDownloadView.as_view(), name='document-download'),
 ]

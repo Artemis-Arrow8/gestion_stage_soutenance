@@ -161,3 +161,14 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
 }
+# ==========================================
+# CONFIGURATION DU STOCKAGE DES DOCUMENTS
+# ==========================================
+
+MEDIA_URL = "/media/"
+
+MEDIA_ROOT = BASE_DIR / "media"
+
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = 12 * 1024 * 1024

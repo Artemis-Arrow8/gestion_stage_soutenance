@@ -243,6 +243,7 @@ class LoginView(APIView):
 def _user_profile(user, role=None):
     """Construit le profil public commun au login et à la route de profil."""
     role = role or get_user_role(user)
+
     profile = {
         'id': user.pk,
         'username': user.get_username(),
@@ -252,17 +253,27 @@ def _user_profile(user, role=None):
         ) or user.get_username(),
         'role': role,
     }
+
     try:
         student = user.student_account.student
     except AttributeError:
         return profile
+
+    # Recherche du dossier lié à la campagne active
+    folder = InternshipFolder.objects.filter(
+        student=student,
+        campaign__is_active=True
+    ).order_by('-created_at').first()
 
     profile.update({
         'id': student.pk,
         'student_number': student.student_number,
         'full_name': student.full_name,
         'email': student.email,
+        'folder_id': folder.id if folder else None,
+        'folder_status': folder.status if folder else None,
     })
+
     return profile
 
 

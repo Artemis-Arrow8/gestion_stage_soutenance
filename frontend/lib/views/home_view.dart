@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/auth_provider.dart';
+import 'documents_view.dart';
+import 'document_upload_view.dart';
 
-/// Affiche un tableau de bord correspondant au rôle fourni par l’API.
 class HomeView extends StatelessWidget {
   const HomeView({super.key});
 
@@ -12,31 +13,40 @@ class HomeView extends StatelessWidget {
     final authProvider = context.watch<AuthProvider>();
     final user = authProvider.user;
     final dashboard = _dashboardForRole(authProvider.role);
+
     if (user == null || dashboard == null) {
       return const Scaffold(
         body: Center(
-          child: Text('Cette session ne donne accès à aucun espace SGSUS.'),
+          child: Text(
+            'Cette session ne donne accès à aucun espace SGSUS.',
+          ),
         ),
       );
     }
 
-    const goldColor = Color(0xFFD4AF37);
-    const cardColor = Color(0xFF1E1E1E);
+    const gold = Color(0xFFD4AF37);
+    const card = Color(0xFF1E1E1E);
+
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         title: Text(
           dashboard.title,
-          style: const TextStyle(color: Colors.white, fontSize: 18),
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+          ),
         ),
-        backgroundColor: cardColor,
-        elevation: 0,
+        backgroundColor: card,
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
           IconButton(
-            icon: const Icon(Icons.logout_rounded, color: goldColor),
+            icon: const Icon(
+              Icons.logout_rounded,
+              color: gold,
+            ),
             tooltip: 'Se déconnecter',
-            onPressed: authProvider.logout,
+            onPressed: () => authProvider.logout(),
           ),
         ],
       ),
@@ -50,8 +60,12 @@ class HomeView extends StatelessWidget {
                 children: [
                   const CircleAvatar(
                     radius: 30,
-                    backgroundColor: goldColor,
-                    child: Icon(Icons.person, size: 35, color: Colors.black),
+                    backgroundColor: gold,
+                    child: Icon(
+                      Icons.person,
+                      size: 35,
+                      color: Colors.black,
+                    ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
@@ -60,41 +74,61 @@ class HomeView extends StatelessWidget {
                       children: [
                         const Text(
                           'Bienvenue,',
-                          style: TextStyle(color: Colors.white70, fontSize: 14),
+                          style: TextStyle(
+                            color: Colors.white70,
+                          ),
                         ),
-                        const SizedBox(height: 4),
                         Text(
-                          user['full_name'] as String? ?? 'Compte SGSUS',
+                          user['full_name']?.toString() ??
+                              'Compte SGSUS',
                           style: const TextStyle(
-                            color: goldColor,
+                            color: gold,
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
                           ),
-                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
                   ),
                 ],
               ),
+
               const SizedBox(height: 32),
+
               _buildProfileCard(user, dashboard),
-              const SizedBox(height: 32),
+
+              const SizedBox(height: 25),
+
               const Text(
-                'Modules à intégrer selon votre rôle',
+                'MES MODULES',
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 16,
+                  fontSize: 17,
                   fontWeight: FontWeight.bold,
                 ),
               ),
+
               const SizedBox(height: 16),
+
               Expanded(
-                child: GridView.count(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 16,
-                  mainAxisSpacing: 16,
-                  children: dashboard.actions.map(_buildActionCard).toList(),
+                child: GridView.builder(
+                  itemCount: dashboard.actions.length,
+                  gridDelegate:
+                      const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 16,
+                    mainAxisSpacing: 16,
+                    childAspectRatio: 1.15,
+                  ),
+                  itemBuilder: (context, index) {
+                    final action = dashboard.actions[index];
+
+                    return _buildActionCard(
+                      context,
+                      action,
+                      authProvider,
+                    );
+                  },
                 ),
               ),
             ],
@@ -104,50 +138,94 @@ class HomeView extends StatelessWidget {
     );
   }
 
-  /// Associe seulement les quatre rôles SGSUS connus à un tableau de bord.
-  _RoleDashboard? _dashboardForRole(String? role) {
-    return switch (role) {
-      'admin' => const _RoleDashboard(
+ // Configuration des espaces selon le rôle.
+_RoleDashboard? _dashboardForRole(String? role) {
+  return switch (role) {
+    'admin' => const _RoleDashboard(
         title: 'Tableau de bord — Administration',
         roleName: 'Administrateur',
         accountLabel: 'Compte :',
         actions: [
-          _DashboardAction(Icons.manage_accounts, 'Gestion des comptes'),
-          _DashboardAction(Icons.school, 'Gestion des étudiants'),
+          _DashboardAction(
+            Icons.manage_accounts,
+            'Gestion des comptes',
+          ),
+          _DashboardAction(
+            Icons.school,
+            'Gestion des étudiants',
+          ),
+          _DashboardAction(
+            Icons.folder,
+            'Gestion des dossiers',
+          ),
         ],
       ),
-      'responsible' => const _RoleDashboard(
+    'responsible' => const _RoleDashboard(
         title: 'Tableau de bord — Pédagogie',
         roleName: 'Responsable pédagogique',
         accountLabel: 'Compte :',
         actions: [
-          _DashboardAction(Icons.campaign, 'Campagnes'),
-          _DashboardAction(Icons.event_note, 'Planification'),
+          _DashboardAction(
+            Icons.campaign,
+            'Campagnes',
+          ),
+          _DashboardAction(
+            Icons.event_note,
+            'Planification',
+          ),
+          _DashboardAction(
+            Icons.folder_open,
+            'Suivi des dossiers',
+          ),
         ],
       ),
-      'supervisor' => const _RoleDashboard(
+    'supervisor' => const _RoleDashboard(
         title: 'Tableau de bord — Encadrement',
         roleName: 'Encadreur',
         accountLabel: 'Compte :',
         actions: [
-          _DashboardAction(Icons.rate_review, 'Avis d’encadrement'),
-          _DashboardAction(Icons.fact_check, 'Suivi des avis'),
+          _DashboardAction(
+            Icons.rate_review,
+            'Avis d’encadrement',
+          ),
+          _DashboardAction(
+            Icons.fact_check,
+            'Suivi des avis',
+          ),
         ],
       ),
-      'student' => const _RoleDashboard(
+    'student' => const _RoleDashboard(
         title: 'Tableau de bord — Étudiant',
         roleName: 'Étudiant',
-        accountLabel: 'Numéro d’étudiant :',
+        accountLabel: 'Numéro étudiant :',
         actions: [
-          _DashboardAction(Icons.folder_open, 'Mon dossier de stage'),
-          _DashboardAction(Icons.event_note, 'Ma soutenance'),
+          _DashboardAction(
+            Icons.folder_open,
+            'Mon dossier de stage',
+          ),
+          _DashboardAction(
+            Icons.upload_file,
+            'Déposer un document',
+          ),
+          _DashboardAction(
+            Icons.description,
+            'Mes documents',
+          ),
+          _DashboardAction(
+            Icons.timeline,
+            'Suivi de mon dossier',
+          ),
+          _DashboardAction(
+            Icons.event_note,
+            'Ma soutenance',
+          ),
         ],
       ),
-      _ => null,
-    };
-  }
+    _ => null,
+  };
+}
 
-  /// Présente les informations du profil retourné par Django.
+  // Affichage des informations du compte.
   Widget _buildProfileCard(
     Map<String, dynamic> user,
     _RoleDashboard dashboard,
@@ -169,34 +247,50 @@ class HomeView extends StatelessWidget {
             'Profil du compte',
             style: TextStyle(
               color: Colors.white,
-              fontSize: 16,
               fontWeight: FontWeight.bold,
+              fontSize: 16,
             ),
           ),
-          const Divider(color: Colors.white24, height: 24),
+
+          const Divider(
+            color: Colors.white24,
+            height: 24,
+          ),
+
           _buildInfoRow(
             dashboard.accountLabel,
-            user['student_number'] as String? ??
-                user['username'] as String? ??
+            user['student_number']?.toString() ??
+                user['username']?.toString() ??
                 'N/A',
           ),
+
           const SizedBox(height: 12),
-          _buildInfoRow('Email :', user['email'] as String? ?? 'N/A'),
+
+          _buildInfoRow(
+            'Email :',
+            user['email']?.toString() ?? 'N/A',
+          ),
+
           const SizedBox(height: 12),
-          _buildInfoRow('Rôle :', dashboard.roleName),
+
+          _buildInfoRow(
+            'Rôle :',
+            dashboard.roleName,
+          ),
         ],
       ),
     );
   }
 
-  /// Affiche une ligne de renseignement sans faire confiance à des valeurs nulles.
   Widget _buildInfoRow(String label, String value) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(
           label,
-          style: const TextStyle(color: Colors.white60, fontSize: 14),
+          style: const TextStyle(
+            color: Colors.white60,
+          ),
         ),
         Flexible(
           child: Text(
@@ -204,8 +298,6 @@ class HomeView extends StatelessWidget {
             textAlign: TextAlign.end,
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
             ),
           ),
         ),
@@ -213,42 +305,115 @@ class HomeView extends StatelessWidget {
     );
   }
 
-  /// Signale un module prévu sans simuler une navigation qui n’existe pas encore.
-  Widget _buildActionCard(_DashboardAction action) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E1E),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(action.icon, size: 40, color: const Color(0xFFD4AF37)),
-          const SizedBox(height: 12),
-          Text(
-            action.title,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
+  // Gestion des clics sur les modules.
+  Widget _buildActionCard(
+    BuildContext context,
+    _DashboardAction action,
+    AuthProvider authProvider,
+  ) {
+    final isDocumentModule =
+        action.title == 'Mes documents' ||
+        action.title == 'Déposer un document';
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+
+      onTap: () {
+        if (isDocumentModule) {
+          final folderId = authProvider.folderId;
+          final token = authProvider.accessToken;
+
+          // Vérification de la session et du dossier.
+          if (folderId == null || token == null) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Le dossier de stage ou le jeton '
+                  'de connexion est indisponible.',
+                ),
+              ),
+            );
+            return;
+          }
+
+          // Choix de l'écran selon le module.
+          final Widget page;
+
+          if (action.title == 'Déposer un document') {
+            page = DocumentUploadView(
+              folderId: folderId,
+              accessToken: token,
+            );
+          } else {
+            page = DocumentsView(
+              folderId: folderId,
+              accessToken: token,
+            );
+          }
+
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => page,
             ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '${action.title} sera intégré prochainement.',
+              ),
+            ),
+          );
+        }
+      },
+
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E1E1E),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: Colors.white10,
           ),
-          const SizedBox(height: 8),
-          const Text(
-            'Module non intégré',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white54, fontSize: 12),
-          ),
-        ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              action.icon,
+              size: 38,
+              color: const Color(0xFFD4AF37),
+            ),
+
+            const SizedBox(height: 12),
+
+            Text(
+              action.title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+
+            const SizedBox(height: 6),
+
+            const Text(
+              'Accéder au module',
+              style: TextStyle(
+                color: Colors.white54,
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-/// Regroupe les libellés et les entrées visibles pour un rôle.
+// Modèle du tableau de bord.
 class _RoleDashboard {
   const _RoleDashboard({
     required this.title,
@@ -263,7 +428,7 @@ class _RoleDashboard {
   final List<_DashboardAction> actions;
 }
 
-/// Représente une entrée descriptive du tableau de bord.
+// Modèle des actions.
 class _DashboardAction {
   const _DashboardAction(this.icon, this.title);
 
