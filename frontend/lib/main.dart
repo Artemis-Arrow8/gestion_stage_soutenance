@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'screens/dashboard_screen.dart';
 import 'providers/auth_provider.dart';
-import 'views/home_view.dart';
 import 'views/login_view.dart';
 
 void main() {

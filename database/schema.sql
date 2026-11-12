@@ -26,6 +26,21 @@ CREATE TABLE student (
     full_name VARCHAR(255) NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL
 );
+-- ==========================================
+-- Liaison entre compte utilisateur et étudiant
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS student_account (
+    id SERIAL PRIMARY KEY,
+
+    user_id INTEGER NOT NULL UNIQUE
+        REFERENCES auth_user(id)
+        ON DELETE CASCADE,
+
+    student_id INTEGER NOT NULL UNIQUE
+        REFERENCES student(id)
+        ON DELETE CASCADE
+);
 
 -- 3. Table Dossier de Stage
 CREATE TABLE internship_folder (

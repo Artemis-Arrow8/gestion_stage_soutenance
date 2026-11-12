@@ -17,9 +17,11 @@ from rest_framework import serializers
 from api.models import (
     Campaign,
     Defense,
+    DocumentVersion,
     InternshipFolder,
     Jury,
     JuryMember,
+    Review,
     Room,
     Student,
     User,
@@ -62,7 +64,21 @@ class InternshipFolderSerializer(serializers.ModelSerializer):
         model = InternshipFolder
         fields = "__all__"
 
+class DocumentVersionSerializer(serializers.ModelSerializer):
 
+    class Meta:
+        model = DocumentVersion
+        fields = "__all__"
+        read_only_fields = ["id", "uploaded_at"]
+
+
+class ReviewSerializer(serializers.ModelSerializer):
+    """Avis de l'encadreur / du tuteur sur une version de document."""
+
+    class Meta:
+        model = Review
+        fields = "__all__"
+        read_only_fields = ["id", "created_at"]
 # ---------------------------------------------------------------------------
 # Salles (ajout Tâche 4)
 # ---------------------------------------------------------------------------

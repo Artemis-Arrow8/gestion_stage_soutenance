@@ -23,6 +23,13 @@ from api.views import (
     LogoutView,
     UserProfileView,
 )
+from api.documents.views import (
+    DocumentUploadView,
+    DocumentDownloadView,
+    DocumentListView,
+    ReviewListCreateView,
+)
+
 
 router = DefaultRouter()
 
@@ -42,4 +49,25 @@ urlpatterns = [
     path("token/refresh/", TokenRefreshView.as_view(), name="token-refresh"),
 
     path("", include(router.urls)),
+    path(
+    "documents/upload/",
+    DocumentUploadView.as_view(),
+    name="document-upload"
+),
+
+path(
+    "documents/<int:document_id>/download/",
+    DocumentDownloadView.as_view(),
+    name="document-download"
+),
+path(
+    "documents/folder/<int:folder_id>/",
+    DocumentListView.as_view(),
+    name="document-list",
+),
+path(
+    "documents/<int:document_id>/reviews/",
+    ReviewListCreateView.as_view(),
+    name="document-reviews",
+),
 ]

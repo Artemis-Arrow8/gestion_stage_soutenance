@@ -20,7 +20,7 @@ from django.db.backends.postgresql.psycopg_any import DateTimeTZRange
 from django.db.utils import IntegrityError
 from rest_framework import viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from django.contrib.auth import authenticate, get_user_model
@@ -53,6 +53,7 @@ from api.serializers import (
     UserSerializer,
 )
 from api.services import conflicts
+from api.documents.views import get_student_for_user
 
 # Fenêtre horaire d'ouverture par défaut pour le calcul des créneaux libres.
 HEURE_OUVERTURE = 8
@@ -110,10 +111,49 @@ class StudentViewSet(viewsets.ModelViewSet):
 
 
 class InternshipFolderViewSet(viewsets.ModelViewSet):
+    """Dossiers de stage avec filtrage et droits selon le rôle.
+
+    * student : voit uniquement ses propres dossiers, lecture seule.
+    * supervisor / responsible / admin : accès complet (création, modification
+      du statut pour le suivi, suppression).
+    """
+
     queryset = InternshipFolder.objects.select_related(
         "student", "campaign"
     ).order_by("id")
     serializer_class = InternshipFolderSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        role = get_user_role(self.request.user)
+
+        if role == "student":
+            student = get_student_for_user(self.request.user)
+            if student is None:
+                return queryset.none()
+            return queryset.filter(student=student)
+
+        return queryset
+
+    def _assert_can_write(self):
+        role = get_user_role(self.request.user)
+        if role not in ("admin", "responsible", "supervisor"):
+            raise PermissionDenied(
+                "Seuls les responsables, encadreurs et administrateurs "
+                "peuvent modifier les dossiers."
+            )
+
+    def perform_create(self, serializer):
+        self._assert_can_write()
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._assert_can_write()
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._assert_can_write()
+        instance.delete()
 
 
 # ---------------------------------------------------------------------------

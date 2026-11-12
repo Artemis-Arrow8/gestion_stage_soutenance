@@ -13,7 +13,7 @@ Noms de tables conformes à schema.sql :
 La table `room` (salles) est un ajout de la Tâche 4 (module planification),
 défini de manière additive dans database/schema.sql.
 """
-
+from django.conf import settings
 from django.db import models
 from django.contrib.postgres.fields import DateTimeRangeField
 
@@ -64,6 +64,29 @@ class Student(models.Model):
     def __str__(self):
         return f"{self.student_number} — {self.full_name}"
 
+# Liaison entre le compte Django et la fiche étudiant
+class StudentAccount(models.Model):
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        db_column='user_id',
+        related_name='student_account'
+    )
+
+    student = models.OneToOneField(
+        Student,
+        on_delete=models.CASCADE,
+        db_column='student_id',
+        related_name='student_account'
+    )
+
+    class Meta:
+        managed = False
+        db_table = 'student_account'
+
+    def __str__(self):
+        return f"{self.user.username} - {self.student.full_name}"
 
 # 4. Table internship_folder (Dossier de stage)
 class InternshipFolder(models.Model):
