@@ -28,7 +28,7 @@ from api.models import (
 )
 from api.services import conflicts
 
-UTC = timezone.utc
+UTC = timezone.UTC
 
 # Créneau de référence des tests : 2026-07-10 (pas d'effet de bord réel,
 # table de test dédiée).

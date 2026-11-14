@@ -123,7 +123,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
           title: 'Gestion des salles',
           subtitle: 'Capacités, localisation et disponibilité des espaces.',
           actions: [
-            if (Session.peutGerer)
+            if (Session.peutGerer(context))
               SgButton('Ajouter une salle',
                   icon: Icons.add_rounded, onPressed: () => _editer()),
           ],
@@ -261,7 +261,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
                                         icon: Icons.edit_outlined,
                                         tooltip: 'Modifier',
                                         tone: SgTone.info,
-                                        onPressed: Session.peutGerer
+                                        onPressed: Session.peutGerer(context)
                                             ? () => _editer(room: r)
                                             : null),
                                     const SizedBox(width: 6),
@@ -269,7 +269,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
                                         icon: Icons.delete_outline_rounded,
                                         tooltip: 'Supprimer',
                                         tone: SgTone.danger,
-                                        onPressed: Session.peutGerer
+                                        onPressed: Session.peutGerer(context)
                                             ? () => _supprimer(r)
                                             : null),
                                   ],
@@ -335,7 +335,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
                                       icon: Icons.edit_outlined,
                                       tooltip: 'Modifier',
                                       tone: SgTone.info,
-                                      onPressed: Session.peutGerer
+                                      onPressed: Session.peutGerer(context)
                                           ? () => _editer(room: r)
                                           : null),
                                   const SizedBox(width: 6),
@@ -343,7 +343,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
                                       icon: Icons.delete_outline_rounded,
                                       tooltip: 'Supprimer',
                                       tone: SgTone.danger,
-                                      onPressed: Session.peutGerer
+                                      onPressed: Session.peutGerer(context)
                                           ? () => _supprimer(r)
                                           : null),
                                 ],

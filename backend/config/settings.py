@@ -15,30 +15,77 @@ import os
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+# Racine du dépôt, utilisée pour charger le fichier `.env` situé à côté
+# de `docker-compose.yml` et pour construire les chemins locaux.
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR.parent / ".env")
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
+def _env_bool(name, default):
+    """Lit un booléen documenté et refuse les valeurs ambiguës."""
+    valeur = os.getenv(name)
+    if valeur is None:
+        return default
+    normalisee = valeur.strip().lower()
+    if normalisee in {"1", "true", "yes", "on", "oui"}:
+        return True
+    if normalisee in {"0", "false", "no", "off", "non"}:
+        return False
+    raise ImproperlyConfigured(
+        f"{name} doit valoir true/false, yes/no, on/off ou 1/0."
+    )
 
-DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() == "true"
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
-if not SECRET_KEY:
-    if not DEBUG:
-        raise ImproperlyConfigured("DJANGO_SECRET_KEY doit être défini en production.")
+def _env_int(name, default, minimum=1):
+    """Lit un entier de configuration et valide sa borne minimale."""
+    valeur = os.getenv(name)
+    try:
+        resultat = default if valeur is None else int(valeur)
+    except ValueError as error:
+        raise ImproperlyConfigured(f"{name} doit être un nombre entier.") from error
+    if resultat < minimum:
+        raise ImproperlyConfigured(f"{name} doit être supérieur ou égal à {minimum}.")
+    return resultat
+
+
+# DJANGO_DEBUG est désactivé par défaut : un environnement mal configuré
+# n'expose donc pas accidentellement le mode de développement.
+DEBUG = _env_bool("DJANGO_DEBUG", False)
+
+# DJANGO_SECRET_KEY doit être une clé aléatoire privée, différente par instance.
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "").strip()
+if not DEBUG and (
+    len(SECRET_KEY) < 50
+    or SECRET_KEY.startswith("replace-with-")
+    or SECRET_KEY.startswith("dev-only-")
+):
+    raise ImproperlyConfigured(
+        "DJANGO_SECRET_KEY doit être une clé aléatoire d'au moins 50 caractères en production."
+    )
+if not SECRET_KEY or SECRET_KEY.startswith("replace-with-"):
+    # Cette valeur de secours n'est admise qu'en développement local ;
+    # les contrôles ci-dessus interdisent son utilisation en déploiement.
     SECRET_KEY = "dev-only-key-not-for-production-use"
 
+# DJANGO_ALLOWED_HOSTS est une liste séparée par des virgules des noms d'hôtes
+# réellement utilisés pour joindre Django, sans schéma HTTP/HTTPS.
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.getenv(
         "DJANGO_ALLOWED_HOSTS",
-        "localhost,127.0.0.1,192.168.1.7"
+        "localhost,127.0.0.1"
     ).split(",")
     if host.strip()
 ]
+
+if not DEBUG and not ALLOWED_HOSTS:
+    raise ImproperlyConfigured(
+        "DJANGO_ALLOWED_HOSTS doit contenir au moins un nom d'hôte en production."
+    )
+if not DEBUG and "*" in ALLOWED_HOSTS:
+    raise ImproperlyConfigured(
+        "DJANGO_ALLOWED_HOSTS ne peut pas contenir '*' en production."
+    )
 # Application definition
 
 INSTALLED_APPS = [
@@ -50,6 +97,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',  
+    'rest_framework_simplejwt.token_blacklist',
     'api',
     
 ]
@@ -57,6 +105,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -65,9 +114,37 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+# Les origines ci-dessous sont autorisées uniquement pour les clients web
+# locaux de développement ; les déploiements ajoutent leurs origines exactes.
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+] if DEBUG else []
+# DJANGO_CORS_ALLOWED_ORIGINS contient les origines exactes du frontend,
+# séparées par des virgules (par exemple https://app.exemple.org).
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("DJANGO_CORS_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
 ]
+
+# Ces paramètres protègent l'application derrière HTTPS ; HSTS reste à zéro
+# tant que le domaine et ses sous-domaines ne sont pas confirmés en HTTPS.
+SECURE_SSL_REDIRECT = _env_bool("DJANGO_SECURE_SSL_REDIRECT", not DEBUG)
+SECURE_COOKIES = _env_bool("DJANGO_SECURE_COOKIES", not DEBUG)
+SECURE_HSTS_SECONDS = _env_int("DJANGO_SECURE_HSTS_SECONDS", 0, minimum=0)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = _env_bool(
+    "DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", False
+)
+SECURE_HSTS_PRELOAD = _env_bool("DJANGO_SECURE_HSTS_PRELOAD", False)
+SESSION_COOKIE_SECURE = SECURE_COOKIES
+CSRF_COOKIE_SECURE = SECURE_COOKIES
+# DJANGO_BEHIND_HTTPS_PROXY n'est activé que si le proxy maîtrisé écrase
+# réellement l'en-tête X-Forwarded-Proto reçu du client.
+SECURE_PROXY_SSL_HEADER = (
+    ("HTTP_X_FORWARDED_PROTO", "https")
+    if _env_bool("DJANGO_BEHIND_HTTPS_PROXY", False)
+    else None
+)
 
 ROOT_URLCONF = 'config.urls'
 
@@ -91,6 +168,8 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
+# POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD et DB_HOST/DB_PORT décrivent
+# la connexion PostgreSQL ; Compose remplace DB_HOST/DB_PORT par db:5432.
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
@@ -116,6 +195,13 @@ DATABASES = {
         ),
     }
 }
+if not DEBUG and (
+    not DATABASES["default"]["PASSWORD"]
+    or DATABASES["default"]["PASSWORD"].startswith("replace-with-")
+):
+    raise ImproperlyConfigured(
+        "POSTGRES_PASSWORD doit être un secret personnalisé en production."
+    )
 
 # Password validation
 # https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
@@ -147,23 +233,88 @@ USE_I18N = True
 
 USE_TZ = True
 
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',
+    ),
+}
+
+SIMPLE_JWT = {
+    # JWT_ACCESS_TOKEN_MINUTES limite la durée du jeton utilisé sur l'API.
+    'ACCESS_TOKEN_LIFETIME': timedelta(
+        minutes=_env_int("JWT_ACCESS_TOKEN_MINUTES", 5)
+    ),
+    # JWT_REFRESH_TOKEN_DAYS fixe la durée maximale de renouvellement.
+    'REFRESH_TOKEN_LIFETIME': timedelta(
+        days=_env_int("JWT_REFRESH_TOKEN_DAYS", 1)
+    ),
+    # La rotation réduit la durée d'utilisation d'un jeton de renouvellement volé.
+    'ROTATE_REFRESH_TOKENS': _env_bool("JWT_ROTATE_REFRESH_TOKENS", True),
+    # La liste noire invalide l'ancien jeton dès qu'il a été renouvelé.
+    'BLACKLIST_AFTER_ROTATION': _env_bool(
+        "JWT_BLACKLIST_AFTER_ROTATION", True
+    ),
+}
+
 
 # Tests
-# Exécuteur personnalisé : charge database/schema.sql dans la base de test
-# (les modèles sont managed=False, Django ne crée donc pas les tables lui-même).
+# Exécuteur personnalisé : charge le schéma SQL historique et ses contraintes
+# dans la base de test après les migrations.
 TEST_RUNNER = 'config.test_runner.SchemaTestRunner'
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
+# Les fichiers statiques sont collectés dans l'image Docker ; le stockage des
+# documents déposés reste dans MEDIA_ROOT, idéalement monté sur un volume durable.
 STATIC_URL = 'static/'
-
-
-# Email
-# https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
-
-MAILERS = {
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+MEDIA_URL = '/media/'
+# DJANGO_MEDIA_ROOT permet de placer les documents hors du système de fichiers
+# éphémère du conteneur (Compose utilise /app/media).
+MEDIA_ROOT = Path(
+    os.getenv('DJANGO_MEDIA_ROOT', '').strip() or str(BASE_DIR / 'media')
+)
+STORAGES = {
     'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
     },
 }
+
+
+# Les variables DJANGO_EMAIL_* configurent le relais de courriels. Le backend
+# console reste la valeur de développement ; en production, un relais SMTP doit
+# être fourni et TLS/SSL ne peuvent pas être activés simultanément.
+EMAIL_BACKEND = os.getenv(
+    'DJANGO_EMAIL_BACKEND',
+    'django.core.mail.backends.console.EmailBackend',
+)
+EMAIL_HOST = os.getenv('DJANGO_EMAIL_HOST', '').strip()
+EMAIL_PORT = _env_int('DJANGO_EMAIL_PORT', 587)
+EMAIL_HOST_USER = os.getenv('DJANGO_EMAIL_HOST_USER', '').strip()
+EMAIL_HOST_PASSWORD = os.getenv('DJANGO_EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = _env_bool('DJANGO_EMAIL_USE_TLS', True)
+EMAIL_USE_SSL = _env_bool('DJANGO_EMAIL_USE_SSL', False)
+DEFAULT_FROM_EMAIL = os.getenv(
+    'DJANGO_DEFAULT_FROM_EMAIL',
+    'noreply@localhost',
+).strip()
+
+if EMAIL_USE_TLS and EMAIL_USE_SSL:
+    raise ImproperlyConfigured(
+        "DJANGO_EMAIL_USE_TLS et DJANGO_EMAIL_USE_SSL ne peuvent pas être activés ensemble."
+    )
+if (
+    not DEBUG
+    and EMAIL_BACKEND == 'django.core.mail.backends.smtp.EmailBackend'
+    and not EMAIL_HOST
+):
+    raise ImproperlyConfigured(
+        "DJANGO_EMAIL_HOST est obligatoire lorsque le relais SMTP est activé en production."
+    )

@@ -175,9 +175,9 @@ class TestTraductionIntegrityError:
         message = str(traduite.detail["detail"])
         assert mot_cle in message and "EXG01" in message
 
-    def test_contrainte_inconnue_message_generique(self):
+    def test_contrainte_inconnue_n_est_pas_presentee_comme_un_conflit(self):
         traduite = conflicts.traduire_integrity_error(IntegrityError("autre chose"))
-        assert "EXG01" in str(traduite.detail["detail"])
+        assert traduite is None
 
 
 # ---------------------------------------------------------------------------

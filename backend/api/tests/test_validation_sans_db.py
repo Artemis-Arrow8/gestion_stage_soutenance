@@ -8,15 +8,18 @@ Tests de validation qui n'exigent PAS de base de données (SimpleTestCase) :
 
 from datetime import datetime, timedelta
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db.backends.postgresql.psycopg_any import DateTimeTZRange
 from django.test import SimpleTestCase
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from api.serializers import JuryMemberSerializer, SalleSerializer
+from api.documents.validators import MAX_DOCUMENT_SIZE, validate_pdf_file
 from api.services import conflicts
 
-UTC = timezone.utc
+UTC = timezone.UTC
 
 
 class ConstruireCreneauTests(SimpleTestCase):
@@ -29,7 +32,9 @@ class ConstruireCreneauTests(SimpleTestCase):
         self.assertIsInstance(slot, DateTimeTZRange)
         self.assertEqual(slot.lower, datetime(2026, 7, 10, 8, 0, tzinfo=UTC))
         self.assertEqual(slot.upper, datetime(2026, 7, 10, 10, 0, tzinfo=UTC))
-        self.assertEqual(slot.bounds, "[)")
+        self.assertTrue(slot.lower_inc)
+        self.assertFalse(slot.upper_inc)
+
 
     def test_chaine_iso_avec_offset_convertie_en_utc(self):
         # 10:00 à Bamako (UTC+2) => 08:00 UTC
@@ -75,6 +80,44 @@ class ConstruireCreneauTests(SimpleTestCase):
     def test_valeur_manquante_refusee(self):
         with self.assertRaises(ValidationError):
             conflicts.construire_creneau(None, None)
+
+
+class ValidationPdfTests(SimpleTestCase):
+    """Garantit le type, la signature et la taille maximale des dépôts."""
+
+    def test_pdf_valide_accepte(self):
+        fichier = SimpleUploadedFile(
+            "rapport.pdf",
+            b"%PDF-1.4 contenu",
+            content_type="application/pdf",
+        )
+
+        self.assertIs(validate_pdf_file(fichier), fichier)
+
+    def test_extension_non_pdf_refusee(self):
+        fichier = SimpleUploadedFile("rapport.txt", b"%PDF-1.4 contenu")
+
+        with self.assertRaisesMessage(
+            DjangoValidationError, "Seuls les fichiers PDF"
+        ):
+            validate_pdf_file(fichier)
+
+    def test_fausse_signature_pdf_refusee(self):
+        fichier = SimpleUploadedFile("rapport.pdf", b"texte sans signature")
+
+        with self.assertRaisesMessage(DjangoValidationError, "pas un véritable"):
+            validate_pdf_file(fichier)
+
+    def test_fichier_superieur_a_dix_mo_refuse(self):
+        fichier = SimpleUploadedFile(
+            "rapport.pdf",
+            b"%PDF-" + b"x" * MAX_DOCUMENT_SIZE,
+        )
+
+        with self.assertRaisesMessage(
+            DjangoValidationError, "ne doit pas dépasser 10 Mo"
+        ):
+            validate_pdf_file(fichier)
 
 
 class ChampsSerializersTests(SimpleTestCase):
@@ -123,9 +166,7 @@ class TraduireIntegrityErrorTests(SimpleTestCase):
             'new row for relation "defense" violates exclusion constraint '
             '"prevent_room_double_booking"'
         )
-        with self.assertRaises(ValidationError) as ctx:
-            conflicts.traduire_integrity_error(erreur)
-        message = str(ctx.exception.detail["detail"])
+        message = str(conflicts.traduire_integrity_error(erreur).detail["detail"])
         self.assertIn("salle", message)
         self.assertIn("EXG01", message)
 
@@ -134,13 +175,11 @@ class TraduireIntegrityErrorTests(SimpleTestCase):
             'new row for relation "defense" violates exclusion constraint '
             '"prevent_jury_double_booking"'
         )
-        with self.assertRaises(ValidationError) as ctx:
-            conflicts.traduire_integrity_error(erreur)
-        message = str(ctx.exception.detail["detail"])
+        message = str(conflicts.traduire_integrity_error(erreur).detail["detail"])
         self.assertIn("jury", message)
 
-    def test_message_generique_si_contrainte_inconnue(self):
-        with self.assertRaises(ValidationError) as ctx:
-            conflicts.traduire_integrity_error(Exception("erreur inconnue"))
-        message = str(ctx.exception.detail["detail"])
-        self.assertIn("EXG01", message)
+    def test_erreur_inconnue_n_est_pas_presentee_comme_un_conflit(self):
+        erreur_traduitee = conflicts.traduire_integrity_error(
+            Exception("erreur inconnue")
+        )
+        self.assertIsNone(erreur_traduitee)

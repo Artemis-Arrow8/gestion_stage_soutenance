@@ -1,11 +1,11 @@
 """
 Exécuteur de tests personnalisé pour le projet SGSUS.
 
-Les modèles de l'application `api` sont `managed = False` : Django ne crée
-pas leurs tables dans la base de test. Cet exécuteur charge donc
-`database/schema.sql` (tables + contraintes EXG01) dans la base de test
-juste après sa création, afin que les tests d'intégration s'exécutent
-exactement comme en production (contraintes d'exclusion PostgreSQL actives).
+Les tables métier hors `Review` et `StudentAccount` restent gérées par le
+schéma SQL historique. Cet exécuteur charge donc `database/schema.sql`
+(tables + contraintes EXG01) dans la base de test après les migrations, afin
+que les tests d'intégration utilisent les mêmes contraintes PostgreSQL qu'en
+production.
 """
 
 from pathlib import Path

@@ -89,6 +89,25 @@ def test_sta03_meme_jury_une_seule_reservation_validee():
     _verifier_un_seul_gagnant(resultats)
 
 
+def test_sta03_meme_membre_dans_deux_jurys_une_seule_reservation_validee():
+    dossier_1, dossier_2 = creer_dossier(), creer_dossier()
+    jury_1 = creer_jury(noms=("Dr Commun", "Dr Traoré"))
+    jury_2 = creer_jury(noms=("Dr Commun", "Dr Keita"))
+
+    def publier(dossier, jury, salle):
+        return lambda: conflicts.planifier_soutenance(
+            dossier.pk, jury.pk, salle, t(9), t(10)
+        )
+
+    resultats = _lancer_en_parallele([
+        publier(dossier_1, jury_1, "Salle 101"),
+        publier(dossier_2, jury_2, "Salle 102"),
+    ])
+    _verifier_un_seul_gagnant(resultats)
+    message = next(r[1] for r in resultats if r[0] == "conflit")
+    assert "Dr Commun" in message
+
+
 def test_filet_de_securite_base_quand_le_controle_applicatif_est_contourne():
     """
     On désactive les contrôles applicatifs : les deux threads passent donc

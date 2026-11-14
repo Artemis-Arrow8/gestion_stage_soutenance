@@ -1,64 +1,41 @@
 import 'package:flutter/foundation.dart';
+
 import '../models/defense.dart';
+import 'planning_service.dart';
 
 class PlanningStore {
   PlanningStore._();
 
   static final ValueNotifier<List<Defense>> defenses =
-      ValueNotifier<List<Defense>>([
-    Defense(
-      id: 1,
-      studentName: 'Aminata Traoré',
-      subject: 'Gestion intelligente des stages',
-      date: '2026-11-10',
-      startTime: '09:00',
-      endTime: '10:00',
-      roomName: 'Salle A1',
-      juryName: 'M. Diallo, Mme Coulibaly',
-      status: 'Confirmée',
-    ),
-    Defense(
-      id: 2,
-      studentName: 'Moussa Konaté',
-      subject: 'Application de gestion scolaire',
-      date: '2026-11-10',
-      startTime: '10:30',
-      endTime: '11:30',
-      roomName: 'Salle B2',
-      juryName: 'M. Touré, Mme Traoré',
-      status: 'En attente',
-    ),
-    Defense(
-      id: 3,
-      studentName: 'Fatoumata Diarra',
-      subject: 'Développement d’une application mobile',
-      date: '2026-11-12',
-      startTime: '14:00',
-      endTime: '15:00',
-      roomName: 'Salle A1',
-      juryName: 'M. Diallo, M. Keïta',
-      status: 'Confirmée',
-    ),
-  ]);
+      ValueNotifier<List<Defense>>([]);
+  static List<String> rooms = [];
+  static List<String> juryMembers = [];
 
-  static const List<String> rooms = [
-    'Salle A1',
-    'Salle A2',
-    'Salle B1',
-    'Salle B2',
-    'Amphithéâtre',
-  ];
+  /// Remplace les données d’affichage par les réponses courantes de l’API.
+  static Future<void> refresh(
+    PlanningService service, {
+    bool loadCatalog = true,
+  }) async {
+    final loadedDefenses = await service.loadDefenses();
+    final loadedRooms = loadCatalog ? await service.loadRooms() : const [];
+    final loadedJuries = loadCatalog ? await service.loadJuries() : const [];
 
-  static const List<String> juryMembers = [
-    'M. Diallo',
-    'Mme Coulibaly',
-    'M. Touré',
-    'Mme Traoré',
-    'M. Keïta',
-    'Mme Diarra',
-  ];
-
-  static int nextId = 4;
+    rooms = loadedRooms
+        .whereType<Map>()
+        .where((room) => room['is_active'] != false)
+        .map((room) => room['name']?.toString() ?? '')
+        .where((name) => name.isNotEmpty)
+        .toList();
+    juryMembers = loadedJuries
+        .whereType<Map>()
+        .expand((jury) => jury['members'] is List ? jury['members'] as List : [])
+        .whereType<Map>()
+        .map((member) => member['member_name']?.toString() ?? '')
+        .where((name) => name.isNotEmpty)
+        .toSet()
+        .toList();
+    defenses.value = loadedDefenses;
+  }
 
   static bool overlaps(String startA, String endA, String startB, String endB) {
     final a1 = _minutes(startA);
@@ -73,6 +50,7 @@ class PlanningStore {
     return int.parse(parts[0]) * 60 + int.parse(parts[1]);
   }
 
+  /// Affiche les collisions connues ; l’API reste seule autorité à l’écriture.
   static List<String> findConflicts(Defense candidate, {int? ignoreId}) {
     final conflicts = <String>[];
     for (final existing in defenses.value) {
@@ -110,14 +88,5 @@ class PlanningStore {
       }
     }
     return conflicts;
-  }
-
-  static void addDefense(Defense defense) {
-    defenses.value = [...defenses.value, defense];
-  }
-
-  static void removeDefense(int id) {
-    defenses.value =
-        defenses.value.where((defense) => defense.id != id).toList();
   }
 }

@@ -1,8 +1,18 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../repositories/auth_repository.dart';
+import '../services/api_service.dart';
+
 class AuthProvider extends ChangeNotifier {
-  final _storage = const FlutterSecureStorage();
+  AuthProvider({
+    AuthRepository? authRepository,
+    FlutterSecureStorage? storage,
+  }) : _authRepository = authRepository ?? AuthRepository(),
+       _storage = storage ?? const FlutterSecureStorage();
+
+  final AuthRepository _authRepository;
+  final FlutterSecureStorage _storage;
 
   String? _accessToken;
   String? _refreshToken;
@@ -10,31 +20,44 @@ class AuthProvider extends ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
 
-  // Getters d'état
   String? get accessToken => _accessToken;
   String? get refreshToken => _refreshToken;
   Map<String, dynamic>? get user => _user;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
   bool get isAuthenticated => _accessToken != null;
-
-  // Rôle de l'utilisateur connecté (admin, student, supervisor, responsible)
   String? get role => _user?['role'] ?? _user?['group'];
 
-  /// Restaure la session depuis le stockage sécurisé au lancement de l'application
   Future<void> restoreSession() async {
     _isLoading = true;
+    _errorMessage = null;
     notifyListeners();
 
     try {
       _accessToken = await _storage.read(key: 'access_token');
       _refreshToken = await _storage.read(key: 'refresh_token');
 
-      if (_accessToken != null) {
-        await fetchUserProfile();
+      if (_accessToken == null && _refreshToken != null) {
+        if (!await refreshAccessToken()) return;
       }
-    } catch (e) {
-      _errorMessage = "Erreur lors de la restauration de la session.";
+      if (_accessToken != null) {
+        try {
+          _user = await _loadUserProfile();
+        } on ApiException catch (error) {
+          if (error.statusCode != 401 || !await refreshAccessToken()) {
+            rethrow;
+          }
+          _user = await _loadUserProfile();
+        }
+      }
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+      await clearSession();
+    } on FormatException catch (error) {
+      _errorMessage = error.message;
+      await clearSession();
+    } catch (_) {
+      _errorMessage = 'Impossible de restaurer la session.';
       await clearSession();
     } finally {
       _isLoading = false;
@@ -42,84 +65,157 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Sauvegarde des tokens dans le stockage sécurisé
   Future<void> _saveTokens(String access, String refresh) async {
-    _accessToken = access;
-    _refreshToken = refresh;
     await _storage.write(key: 'access_token', value: access);
     await _storage.write(key: 'refresh_token', value: refresh);
+    _accessToken = access;
+    _refreshToken = refresh;
   }
 
-  /// Tentative de rafraîchissement du token d'accès en cas d'expiration (401)
-  Future<bool> refreshToken() async {
+  Future<bool> refreshAccessToken() async {
     try {
-      _refreshToken = await _storage.read(key: 'refresh_token');
-      if (_refreshToken == null) {
+      final refresh = _refreshToken ?? await _storage.read(key: 'refresh_token');
+      if (refresh == null || refresh.isEmpty) {
         await clearSession();
         return false;
       }
 
-      // TODO: Remplacez par votre appel API de rafraîchissement (ex: AuthRepository.refresh(_refreshToken!))
-      // Simulation / structure type :
-      // final response = await ApiService.post('/api/token/refresh/', {'refresh': _refreshToken});
-      // await _saveTokens(response['access'], _refreshToken!);
-      
+      final response = await _authRepository.refresh(refresh);
+      final access = response['access'];
+      final rotatedRefresh = response['refresh'] ?? refresh;
+      if (access is! String || access.isEmpty ||
+          rotatedRefresh is! String || rotatedRefresh.isEmpty) {
+        throw const FormatException(
+          'Le serveur a renvoyé des jetons de renouvellement invalides.',
+        );
+      }
+      await _saveTokens(access, rotatedRefresh);
+      _errorMessage = null;
       notifyListeners();
       return true;
-    } catch (e) {
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
       await clearSession();
+      notifyListeners();
+      return false;
+    } on FormatException catch (error) {
+      _errorMessage = error.message;
+      await clearSession();
+      notifyListeners();
+      return false;
+    } catch (_) {
+      _errorMessage = 'Impossible de renouveler la session.';
+      await clearSession();
+      notifyListeners();
       return false;
     }
   }
 
-  /// Récupération du profil utilisateur connecté
+  Future<Map<String, dynamic>> _loadUserProfile() async {
+    final token = _accessToken;
+    if (token == null) {
+      throw const FormatException('Aucun jeton d’accès n’est disponible.');
+    }
+    final response = await _authRepository.profile(token);
+    final profile = response['user'];
+    if (profile is! Map) {
+      throw const FormatException(
+        'Le serveur a renvoyé un profil utilisateur invalide.',
+      );
+    }
+    return Map<String, dynamic>.from(profile);
+  }
+
   Future<void> fetchUserProfile() async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
     try {
-      // TODO: Remplacez par l'appel à votre API de profil
-      // _user = await AuthRepository.getProfile(_accessToken!);
-      notifyListeners();
-    } catch (e) {
-      _errorMessage = "Impossible de récupérer le profil utilisateur.";
+      try {
+        _user = await _loadUserProfile();
+      } on ApiException catch (error) {
+        if (error.statusCode != 401 || !await refreshAccessToken()) {
+          rethrow;
+        }
+        _user = await _loadUserProfile();
+      }
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+    } on FormatException catch (error) {
+      _errorMessage = error.message;
+    } catch (_) {
+      _errorMessage = 'Impossible de récupérer le profil utilisateur.';
+    } finally {
+      _isLoading = false;
       notifyListeners();
     }
   }
 
-  /// Connexion de l'utilisateur
   Future<bool> login(String username, String password) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      // TODO: Appel API de connexion (ex: AuthRepository.login(username, password))
-      // const access = response['access'];
-      // const refresh = response['refresh'];
-      // _user = response['user'];
-      // await _saveTokens(access, refresh);
+      final response = await _authRepository.login(username.trim(), password);
+      final access = response['access'];
+      final refresh = response['refresh'];
+      final profile = response['user'];
+      if (access is! String || access.isEmpty ||
+          refresh is! String || refresh.isEmpty ||
+          profile is! Map) {
+        throw const FormatException(
+          'Le serveur a renvoyé une réponse de connexion invalide.',
+        );
+      }
 
-      _isLoading = false;
-      notifyListeners();
+      await _saveTokens(access, refresh);
+      _user = Map<String, dynamic>.from(profile);
       return true;
-    } catch (e) {
-      _errorMessage = "Identifiants invalides ou erreur de connexion.";
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+      await clearSession();
+      return false;
+    } on FormatException catch (error) {
+      _errorMessage = error.message;
+      await clearSession();
+      return false;
+    } catch (_) {
+      _errorMessage = 'Identifiants invalides ou erreur de connexion.';
+      await clearSession();
+      return false;
+    } finally {
       _isLoading = false;
       notifyListeners();
-      return false;
     }
   }
 
-  /// Déconnexion et nettoyage complet
   Future<void> logout() async {
+    String? logoutError;
+    final access = _accessToken;
+    final refresh = _refreshToken;
+    if (access != null && refresh != null) {
+      try {
+        await _authRepository.logout(access, refresh);
+      } on ApiException catch (error) {
+        logoutError = 'Déconnexion locale effectuée. ${error.message}';
+      } catch (_) {
+        logoutError =
+            'Déconnexion locale effectuée, mais la révocation distante a échoué.';
+      }
+    }
     await clearSession();
+    _errorMessage = logoutError;
     notifyListeners();
   }
 
-  /// Nettoyage des tokens et de l'état local
   Future<void> clearSession() async {
     _accessToken = null;
     _refreshToken = null;
     _user = null;
-    await _storage.delete(key: 'access_token');
-    await _storage.delete(key: 'refresh_token');
+    await Future.wait([
+      _storage.delete(key: 'access_token'),
+      _storage.delete(key: 'refresh_token'),
+    ]);
   }
 }

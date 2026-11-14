@@ -14,6 +14,8 @@ from api.models import (
     DocumentVersion,
     InternshipFolder,
     Jury,
+    JuryMember,
+    Room,
     Student,
     StudentAccount,
 )
@@ -32,7 +34,6 @@ class SGSUSFeaturesTestCase(APITestCase):
         """
         # 1. Données de référence : Campagne
         self.campaign = Campaign.objects.create(
-            name="Campagne Soutenances 2026",
             academic_year="2025-2026",
             is_active=True
         )
@@ -43,6 +44,19 @@ class SGSUSFeaturesTestCase(APITestCase):
             full_name="Hélène Guindo",
             email="helene.guindo@itma.ml"
         )
+        self.student_user = User.objects.create_user(
+            username="student_test",
+            password="student-password",
+        )
+        StudentAccount.objects.create(user=self.student_user, student=self.student)
+        self.jury = Jury.objects.create(name="Jury de test")
+        JuryMember.objects.create(
+            jury=self.jury,
+            member_name="Membre de test",
+            role_in_jury="president",
+        )
+        Room.objects.create(name="Salle A", capacity=30)
+        Room.objects.create(name="Salle B", capacity=30)
         
         # 3. Dossier de stage lié
         self.folder = InternshipFolder.objects.create(
@@ -50,7 +64,7 @@ class SGSUSFeaturesTestCase(APITestCase):
             campaign=self.campaign,
             company_name="Tech Mali Solutions",
             subject="Développement d'une plateforme de gestion",
-            status="brouillon"
+            status="recevable"
         )
 
         # 4. Création d'un utilisateur administrateur pour les tests globaux
@@ -80,7 +94,6 @@ class SGSUSFeaturesTestCase(APITestCase):
         """Vérifie qu'on peut créer une nouvelle campagne (201 Created)."""
         self.client.force_authenticate(user=self.admin_user)
         payload = {
-            "name": "Campagne Session Spéciale",
             "academic_year": "2025-2026",
             "is_active": False
         }
@@ -97,7 +110,7 @@ class SGSUSFeaturesTestCase(APITestCase):
     def test_internship_folder_creation(self):
         """Vérifie la création d'un dossier de stage par un étudiant (nécessite la permission IsStudent)."""
         # Authentification en tant qu'étudiant car InternshipFolderViewSet requiert IsStudent
-        self.client.force_authenticate(user=self.student)
+        self.client.force_authenticate(user=self.student_user)
         
         payload = {
             "student": self.student.id,
@@ -116,7 +129,7 @@ class SGSUSFeaturesTestCase(APITestCase):
             full_name="Autre étudiant",
             email="autre.etudiant@itma.ml",
         )
-        self.client.force_authenticate(user=self.student)
+        self.client.force_authenticate(user=self.student_user)
 
         response = self.client.post(
             self.folder_url,
@@ -157,12 +170,7 @@ class SGSUSFeaturesTestCase(APITestCase):
             version_number=1,
             file_path="other.pdf",
         )
-        student_user = User.objects.create_user(
-            username=self.student.student_number,
-            password="student-password",
-        )
-        StudentAccount.objects.create(user=student_user, student=self.student)
-        access = str(RefreshToken.for_user(student_user).access_token)
+        access = str(RefreshToken.for_user(self.student_user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
 
         folders = self.client.get(self.folder_url)
@@ -239,11 +247,10 @@ class SGSUSFeaturesTestCase(APITestCase):
             reverse("defense-list"),
             {
                 "folder": self.folder.id,
+                "jury": self.jury.id,
                 "room_name": "Salle A",
-                "slot_range": {
-                    "start": "2026-11-05T09:30:00Z",
-                    "end": "2026-11-05T10:30:00Z",
-                },
+                "slot_start": "2026-11-05T09:30:00Z",
+                "slot_end": "2026-11-05T10:30:00Z",
             },
             format="json",
         )
@@ -266,11 +273,10 @@ class SGSUSFeaturesTestCase(APITestCase):
             reverse("defense-list"),
             {
                 "folder": self.folder.id,
+                "jury": self.jury.id,
                 "room_name": "Salle A",
-                "slot_range": {
-                    "start": "2026-11-05T10:00:00Z",
-                    "end": "2026-11-05T11:00:00Z",
-                },
+                "slot_start": "2026-11-05T10:00:00Z",
+                "slot_end": "2026-11-05T11:00:00Z",
             },
             format="json",
         )
@@ -279,6 +285,11 @@ class SGSUSFeaturesTestCase(APITestCase):
 
     def test_defense_rejects_overlapping_jury_booking(self):
         jury = Jury.objects.create(name="Jury A")
+        JuryMember.objects.create(
+            jury=jury,
+            member_name="Président du jury A",
+            role_in_jury="president",
+        )
         Defense.objects.create(
             folder=self.folder,
             jury=jury,
@@ -296,10 +307,8 @@ class SGSUSFeaturesTestCase(APITestCase):
                 "folder": self.folder.id,
                 "jury": jury.id,
                 "room_name": "Salle B",
-                "slot_range": {
-                    "start": "2026-11-05T09:30:00Z",
-                    "end": "2026-11-05T10:30:00Z",
-                },
+                "slot_start": "2026-11-05T09:30:00Z",
+                "slot_end": "2026-11-05T10:30:00Z",
             },
             format="json",
         )

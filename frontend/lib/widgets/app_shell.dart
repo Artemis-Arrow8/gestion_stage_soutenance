@@ -1,87 +1,119 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
 import '../models/defense.dart';
+import '../providers/auth_provider.dart';
 import '../services/conflict_report.dart';
 import '../services/planning_store.dart';
 import '../theme/app_theme.dart';
 import 'ui_kit.dart';
 import '../screens/dashboard_screen.dart';
+import '../screens/campaigns_screen.dart';
+import '../screens/accounts_screen.dart';
 import '../screens/planning_screen.dart';
 import '../screens/rooms_screen.dart';
 import '../screens/jury_screen.dart';
 import '../screens/conflicts_screen.dart';
 import '../screens/documents_screen.dart';
 
-enum AppSection { dashboard, planning, rooms, jury, conflicts, documents }
-
-enum AppRole { admin, planificateur, jury, etudiant, encadreur }
+enum AppSection {
+  dashboard,
+  campaigns,
+  accounts,
+  planning,
+  rooms,
+  jury,
+  conflicts,
+  documents,
+}
 
 class Session {
-  static AppRole role = AppRole.planificateur;
-  static const String nom = 'Mariam Diarra';
+  static String roleLabel(String? role) => switch (role) {
+    'admin' => 'Administrateur',
+    'responsible' => 'Responsable pédagogique',
+    'supervisor' => 'Encadreur',
+    'jury' => 'Membre du jury',
+    'student' => 'Étudiant',
+    _ => 'Utilisateur',
+  };
 
-  static String get roleLabel => switch (role) {
-        AppRole.admin => 'Administrateur',
-        AppRole.planificateur => 'Planificatrice',
-        AppRole.jury => 'Membre du jury',
-        AppRole.etudiant => 'Étudiant',
-        AppRole.encadreur => 'Encadreur',
-      };
+  static bool peutGerer(BuildContext context) {
+    final role = context.read<AuthProvider>().role;
+    return role == 'admin' || role == 'responsible';
+  }
 
-  static bool get peutGerer => role == AppRole.admin || role == AppRole.planificateur;
-
-  static List<AppSection> get sections => switch (role) {
-        AppRole.admin || AppRole.planificateur => AppSection.values,
-        AppRole.jury || AppRole.etudiant => const [
-            AppSection.dashboard,
-            AppSection.planning,
-            AppSection.documents,
-          ],
-        AppRole.encadreur => const [
-            AppSection.dashboard,
-            AppSection.planning,
-            AppSection.jury,
-            AppSection.documents,
-          ],
-      };
+  static List<AppSection> sections(String? role) => switch (role) {
+    'admin' => const [
+      AppSection.dashboard,
+      AppSection.campaigns,
+      AppSection.accounts,
+      AppSection.planning,
+      AppSection.rooms,
+      AppSection.jury,
+      AppSection.conflicts,
+      AppSection.documents,
+    ],
+    'responsible' => const [
+      AppSection.dashboard,
+      AppSection.campaigns,
+      AppSection.planning,
+      AppSection.rooms,
+      AppSection.jury,
+      AppSection.conflicts,
+      AppSection.documents,
+    ],
+    'jury' => const [AppSection.dashboard, AppSection.planning],
+    'student' => const [AppSection.dashboard, AppSection.documents],
+    'supervisor' => const [AppSection.dashboard, AppSection.documents],
+    _ => const [AppSection.dashboard],
+  };
 }
 
 extension AppSectionX on AppSection {
   String get label => switch (this) {
-        AppSection.dashboard => 'Tableau de bord',
-        AppSection.planning => 'Planning',
-        AppSection.rooms => 'Salles',
-        AppSection.jury => 'Jurys',
-        AppSection.conflicts => 'Conflits',
-        AppSection.documents => 'Documents',
-      };
+    AppSection.dashboard => 'Tableau de bord',
+    AppSection.campaigns => 'Campagnes',
+    AppSection.accounts => 'Comptes',
+    AppSection.planning => 'Planning',
+    AppSection.rooms => 'Salles',
+    AppSection.jury => 'Jurys',
+    AppSection.conflicts => 'Conflits',
+    AppSection.documents => 'Documents',
+  };
 
   IconData get icon => switch (this) {
-        AppSection.dashboard => Icons.space_dashboard_outlined,
-        AppSection.planning => Icons.calendar_month_outlined,
-        AppSection.rooms => Icons.meeting_room_outlined,
-        AppSection.jury => Icons.groups_2_outlined,
-        AppSection.conflicts => Icons.report_gmailerrorred_outlined,
-        AppSection.documents => Icons.folder_open_outlined,
-      };
+    AppSection.dashboard => Icons.space_dashboard_outlined,
+    AppSection.campaigns => Icons.calendar_today_outlined,
+    AppSection.accounts => Icons.manage_accounts_outlined,
+    AppSection.planning => Icons.calendar_month_outlined,
+    AppSection.rooms => Icons.meeting_room_outlined,
+    AppSection.jury => Icons.groups_2_outlined,
+    AppSection.conflicts => Icons.report_gmailerrorred_outlined,
+    AppSection.documents => Icons.folder_open_outlined,
+  };
 
   IconData get iconActive => switch (this) {
-        AppSection.dashboard => Icons.space_dashboard_rounded,
-        AppSection.planning => Icons.calendar_month_rounded,
-        AppSection.rooms => Icons.meeting_room_rounded,
-        AppSection.jury => Icons.groups_2_rounded,
-        AppSection.conflicts => Icons.report_gmailerrorred_rounded,
-        AppSection.documents => Icons.folder_open_rounded,
-      };
+    AppSection.dashboard => Icons.space_dashboard_rounded,
+    AppSection.campaigns => Icons.calendar_today_rounded,
+    AppSection.accounts => Icons.manage_accounts_rounded,
+    AppSection.planning => Icons.calendar_month_rounded,
+    AppSection.rooms => Icons.meeting_room_rounded,
+    AppSection.jury => Icons.groups_2_rounded,
+    AppSection.conflicts => Icons.report_gmailerrorred_rounded,
+    AppSection.documents => Icons.folder_open_rounded,
+  };
 }
 
 Widget screenFor(AppSection section) => switch (section) {
-      AppSection.dashboard => const DashboardScreen(),
-      AppSection.planning => const PlanningScreen(),
-      AppSection.rooms => const RoomsScreen(),
-      AppSection.jury => const JuryScreen(),
-      AppSection.conflicts => const ConflictsScreen(),
-      AppSection.documents => const DocumentsScreen(),
-    };
+  AppSection.dashboard => const DashboardScreen(),
+  AppSection.campaigns => const CampaignsScreen(),
+  AppSection.accounts => const AccountsScreen(),
+  AppSection.planning => const PlanningScreen(),
+  AppSection.rooms => const RoomsScreen(),
+  AppSection.jury => const JuryScreen(),
+  AppSection.conflicts => const ConflictsScreen(),
+  AppSection.documents => const DocumentsScreen(),
+};
 
 /// Conteneur commun : sidebar + topbar + en-tête + contenu scrollable.
 class SgPage extends StatelessWidget {
@@ -174,7 +206,10 @@ class SgPage extends StatelessWidget {
           Text(
             subtitle!,
             style: const TextStyle(
-                fontSize: 13, color: AppColors.grey, height: 1.45),
+              fontSize: 13,
+              color: AppColors.grey,
+              height: 1.45,
+            ),
           ),
         ],
       ],
@@ -230,20 +265,28 @@ class _TopBar extends StatelessWidget {
                 width: 7,
                 height: 7,
                 decoration: const BoxDecoration(
-                    color: AppColors.gold, shape: BoxShape.circle),
+                  color: AppColors.gold,
+                  shape: BoxShape.circle,
+                ),
               ),
               const SizedBox(width: 8),
-              const Text('SGSUS',
-                  style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.4)),
+              const Text(
+                'SGSUS',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.4,
+                ),
+              ),
               if (w > 620) ...[
-                const Text('  ·  ',
-                    style: TextStyle(fontSize: 12, color: AppColors.greyLight)),
-                Text(Session.roleLabel,
-                    style:
-                        const TextStyle(fontSize: 12, color: AppColors.grey)),
+                const Text(
+                  '  ·  ',
+                  style: TextStyle(fontSize: 12, color: AppColors.greyLight),
+                ),
+                Text(
+                  Session.roleLabel(context.watch<AuthProvider>().role),
+                  style: const TextStyle(fontSize: 12, color: AppColors.grey),
+                ),
               ],
               const Spacer(),
               const _NotifyButton(),
@@ -286,15 +329,20 @@ class _NotifyButton extends StatelessWidget {
               child: Stack(
                 alignment: Alignment.center,
                 children: [
-                  const Icon(Icons.notifications_none_rounded,
-                      size: 18, color: AppColors.ink),
+                  const Icon(
+                    Icons.notifications_none_rounded,
+                    size: 18,
+                    color: AppColors.ink,
+                  ),
                   if (count > 0)
                     Positioned(
                       top: 5,
                       right: 5,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 4, vertical: 1),
+                          horizontal: 4,
+                          vertical: 1,
+                        ),
                         decoration: BoxDecoration(
                           color: AppColors.danger,
                           borderRadius: BorderRadius.circular(8),
@@ -302,9 +350,10 @@ class _NotifyButton extends StatelessWidget {
                         child: Text(
                           '$count',
                           style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 8.5,
-                              fontWeight: FontWeight.w700),
+                            color: Colors.white,
+                            fontSize: 8.5,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                     ),
@@ -323,74 +372,50 @@ class _ProfileButton extends StatelessWidget {
 
   final bool compact;
 
-  static String libelle(AppRole r) => switch (r) {
-        AppRole.admin => 'Administrateur',
-        AppRole.planificateur => 'Planificateur',
-        AppRole.jury => 'Membre du jury',
-        AppRole.etudiant => 'Étudiant',
-        AppRole.encadreur => 'Encadreur',
-      };
-
   @override
   Widget build(BuildContext context) {
-    return PopupMenuButton<AppRole>(
+    final auth = context.watch<AuthProvider>();
+    final user = auth.user ?? const <String, dynamic>{};
+    final name =
+        user['full_name']?.toString() ??
+        user['username']?.toString() ??
+        'Compte';
+    return PopupMenuButton<String>(
       tooltip: 'Compte',
-      offset: const Offset(0, 46),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      onSelected: (role) {
-        Session.role = role;
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const DashboardScreen()),
-          (route) => false,
-        );
+      onSelected: (value) async {
+        if (value == 'logout') await auth.logout();
       },
-      itemBuilder: (context) => [
-        const PopupMenuItem<AppRole>(
-          enabled: false,
-          child: Text('CHANGER DE PROFIL (DÉMO)',
-              style: TextStyle(
-                  fontSize: 10,
-                  letterSpacing: .7,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.greyLight)),
-        ),
-        for (final r in AppRole.values)
-          PopupMenuItem<AppRole>(
-            value: r,
-            child: Row(
-              children: [
-                Icon(
-                  r == Session.role
-                      ? Icons.radio_button_checked_rounded
-                      : Icons.radio_button_unchecked_rounded,
-                  size: 16,
-                  color: r == Session.role ? AppColors.gold : AppColors.greyLight,
-                ),
-                const SizedBox(width: 10),
-                Text(libelle(r), style: const TextStyle(fontSize: 13)),
-              ],
-            ),
-          ),
+      itemBuilder: (context) => const [
+        PopupMenuItem<String>(value: 'logout', child: Text('Se déconnecter')),
       ],
       child: Row(
         children: [
-          const SgAvatar(initials: 'MD', size: 34),
+          const SgAvatar(initials: 'SG', size: 34),
           if (!compact) ...[
             const SizedBox(width: 10),
             Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(Session.nom,
-                    style: TextStyle(
-                        fontSize: 12.5, fontWeight: FontWeight.w700)),
-                Text(Session.roleLabel,
-                    style: const TextStyle(fontSize: 11, color: AppColors.grey)),
+                Text(
+                  name,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  Session.roleLabel(auth.role),
+                  style: const TextStyle(fontSize: 11, color: AppColors.grey),
+                ),
               ],
             ),
             const SizedBox(width: 4),
-            const Icon(Icons.keyboard_arrow_down_rounded,
-                size: 18, color: AppColors.grey),
+            const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 18,
+              color: AppColors.grey,
+            ),
           ],
         ],
       ),
@@ -408,14 +433,19 @@ class _Sidebar extends StatelessWidget {
     final scaf = Scaffold.maybeOf(context);
     if (scaf != null && scaf.isDrawerOpen) scaf.closeDrawer();
     if (section == current) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => screenFor(section)),
-    );
+    Navigator.of(context)
+        .pushReplacement(MaterialPageRoute(builder: (_) => screenFor(section)));
   }
 
   @override
   Widget build(BuildContext context) {
-    final items = Session.sections;
+    final auth = context.watch<AuthProvider>();
+    final user = auth.user ?? const <String, dynamic>{};
+    final name =
+        user['full_name']?.toString() ??
+        user['username']?.toString() ??
+        'Compte';
+    final items = Session.sections(auth.role);
     return Container(
       width: expanded ? 264 : 78,
       color: AppColors.ink,
@@ -425,7 +455,11 @@ class _Sidebar extends StatelessWidget {
           children: [
             Padding(
               padding: EdgeInsets.fromLTRB(
-                  expanded ? 20 : 0, 22, expanded ? 20 : 0, 16),
+                expanded ? 20 : 0,
+                22,
+                expanded ? 20 : 0,
+                16,
+              ),
               child: Row(
                 mainAxisAlignment: expanded
                     ? MainAxisAlignment.start
@@ -438,8 +472,11 @@ class _Sidebar extends StatelessWidget {
                       gradient: AppTheme.goldLine,
                       borderRadius: BorderRadius.circular(11),
                     ),
-                    child: const Icon(Icons.school_rounded,
-                        size: 20, color: AppColors.ink),
+                    child: const Icon(
+                      Icons.school_rounded,
+                      size: 20,
+                      color: AppColors.ink,
+                    ),
                   ),
                   if (expanded) ...[
                     const SizedBox(width: 11),
@@ -447,17 +484,24 @@ class _Sidebar extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Text('SGSUS',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: 1.6,
-                                height: 1.1)),
+                        Text(
+                          'SGSUS',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.6,
+                            height: 1.1,
+                          ),
+                        ),
                         SizedBox(height: 2),
-                        Text('Soutenances',
-                            style: TextStyle(
-                                color: Color(0xFF8C8C8C), fontSize: 10.5)),
+                        Text(
+                          'Soutenances',
+                          style: TextStyle(
+                            color: Color(0xFF8C8C8C),
+                            fontSize: 10.5,
+                          ),
+                        ),
                       ],
                     ),
                   ],
@@ -482,17 +526,24 @@ class _Sidebar extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(Session.nom,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700)),
+                            Text(
+                              name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                             const SizedBox(height: 2),
-                            Text(Session.roleLabel,
-                                style: const TextStyle(
-                                    color: Color(0xFF9A9A9A), fontSize: 10.5)),
+                            Text(
+                              Session.roleLabel(auth.role),
+                              style: const TextStyle(
+                                color: Color(0xFF9A9A9A),
+                                fontSize: 10.5,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -511,12 +562,15 @@ class _Sidebar extends StatelessWidget {
                   if (expanded)
                     const Padding(
                       padding: EdgeInsets.fromLTRB(9, 2, 9, 8),
-                      child: Text('NAVIGATION',
-                          style: TextStyle(
-                              color: Color(0xFF6E6E6E),
-                              fontSize: 9.5,
-                              letterSpacing: 1.1,
-                              fontWeight: FontWeight.w700)),
+                      child: Text(
+                        'NAVIGATION',
+                        style: TextStyle(
+                          color: Color(0xFF6E6E6E),
+                          fontSize: 9.5,
+                          letterSpacing: 1.1,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ),
                   for (final s in items) _item(context, s),
                 ],
@@ -525,7 +579,7 @@ class _Sidebar extends StatelessWidget {
             const Divider(color: Color(0xFF2C2C2C), height: 1),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-              child: _logout(),
+              child: _logout(context),
             ),
           ],
         ),
@@ -533,28 +587,36 @@ class _Sidebar extends StatelessWidget {
     );
   }
 
-  Widget _logout() {
+  Widget _logout(BuildContext context) {
     final content = Container(
-      padding: EdgeInsets.symmetric(horizontal: expanded ? 12 : 0, vertical: 11),
+      padding: EdgeInsets.symmetric(
+        horizontal: expanded ? 12 : 0,
+        vertical: 11,
+      ),
       child: Row(
-        mainAxisAlignment:
-            expanded ? MainAxisAlignment.start : MainAxisAlignment.center,
+        mainAxisAlignment: expanded
+            ? MainAxisAlignment.start
+            : MainAxisAlignment.center,
         children: [
           const Icon(Icons.logout_rounded, size: 17, color: Color(0xFFB0B0B0)),
           if (expanded) ...[
             const SizedBox(width: 11),
-            const Text('Déconnexion',
-                style: TextStyle(color: Color(0xFFB0B0B0), fontSize: 12.5)),
+            const Text(
+              'Déconnexion',
+              style: TextStyle(color: Color(0xFFB0B0B0), fontSize: 12.5),
+            ),
           ],
         ],
       ),
     );
     final tappable = InkWell(
       borderRadius: BorderRadius.circular(9),
-      onTap: () {},
+      onTap: () => context.read<AuthProvider>().logout(),
       child: content,
     );
-    return expanded ? tappable : Tooltip(message: 'Déconnexion', child: tappable);
+    return expanded
+        ? tappable
+        : Tooltip(message: 'Déconnexion', child: tappable);
   }
 
   Widget _item(BuildContext context, AppSection s) {
@@ -567,8 +629,9 @@ class _Sidebar extends StatelessWidget {
         borderRadius: BorderRadius.circular(9),
       ),
       child: Row(
-        mainAxisAlignment:
-            expanded ? MainAxisAlignment.start : MainAxisAlignment.center,
+        mainAxisAlignment: expanded
+            ? MainAxisAlignment.start
+            : MainAxisAlignment.center,
         children: [
           if (active && expanded) ...[
             Container(
@@ -576,7 +639,9 @@ class _Sidebar extends StatelessWidget {
               height: 17,
               margin: const EdgeInsets.only(right: 9),
               decoration: BoxDecoration(
-                  color: AppColors.gold, borderRadius: BorderRadius.circular(2)),
+                color: AppColors.gold,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
           ],
           Icon(

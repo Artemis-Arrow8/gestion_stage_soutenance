@@ -25,7 +25,7 @@ Toutes les fonctions lèvent `rest_framework.exceptions.ValidationError`
 """
 import datetime as dt
 from datetime import datetime, timedelta
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.backends.postgresql.psycopg_any import DateTimeTZRange
 from django.db.utils import IntegrityError
 from django.utils import timezone
@@ -289,15 +289,13 @@ def traduire_integrity_error(erreur):
     Convertit une IntegrityError (contrainte d'exclusion PostgreSQL) en
     ValidationError lisible. Couvre le cas de la course entre deux
     validations applicatives simultanées : la contrainte SQL tranche.
+    Retourne None pour les autres erreurs afin qu'elles restent visibles.
     """
     message = str(erreur)
     for nom_contrainte, message_lisible in TRADUCTION_CONTRAINTES.items():
         if nom_contrainte in message:
             return ValidationError({"detail": message_lisible})
-    return ValidationError(
-        {"detail": "La base de données a refusé l'enregistrement : "
-                   "conflit de réservation détecté (règle EXG01)."}
-    )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +316,9 @@ def planifier_soutenance(folder_id, jury_id, room_name, debut, fin,
     Retourne l'instance `Defense` enregistrée.
     """
     slot = construire_creneau(debut, fin)
+    # Le verrou transactionnel protège aussi les membres partagés entre jurys.
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(%s, %s)", [0x534753, 1])
     verifier_toutes_regles(folder_id, jury_id, room_name, slot,
                            defense_exclue_id=defense_id)
     try:
@@ -340,5 +341,8 @@ def planifier_soutenance(folder_id, jury_id, room_name, debut, fin,
                     defense.status = status
                 defense.save()
     except IntegrityError as erreur:
-        raise traduire_integrity_error(erreur)
+        erreur_traduite = traduire_integrity_error(erreur)
+        if erreur_traduite is None:
+            raise
+        raise erreur_traduite from erreur
     return defense

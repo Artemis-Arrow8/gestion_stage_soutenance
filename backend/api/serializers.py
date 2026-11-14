@@ -16,6 +16,7 @@ from .models import (
     InternshipFolder,
     Jury,
     JuryMember,
+    JuryMemberAccount,
     Review,
     Room,
     Student,
@@ -110,6 +111,14 @@ class UserAccountSerializer(serializers.ModelSerializer):
         write_only=True,
     )
     student_profile = serializers.SerializerMethodField()
+    jury_member_id = serializers.PrimaryKeyRelatedField(
+        source='jury_member',
+        queryset=JuryMember.objects.all(),
+        required=False,
+        allow_null=True,
+        write_only=True,
+    )
+    jury_profile = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -124,13 +133,16 @@ class UserAccountSerializer(serializers.ModelSerializer):
             'password',
             'student_id',
             'student_profile',
+            'jury_member_id',
+            'jury_profile',
         )
-        read_only_fields = ('id', 'student_profile')
+        read_only_fields = ('id', 'student_profile', 'jury_profile')
 
     def validate(self, attrs):
         instance = self.instance
         role = attrs.get('role', get_user_role(instance) if instance else None)
         student = attrs.get('student')
+        jury_member = attrs.get('jury_member')
 
         if instance is None and role is None:
             raise serializers.ValidationError({'role': 'Le rôle du nouveau compte est obligatoire.'})
@@ -155,6 +167,30 @@ class UserAccountSerializer(serializers.ModelSerializer):
         elif student is not None:
             raise serializers.ValidationError(
                 {'student_id': 'Seul un compte étudiant peut être lié à une fiche étudiante.'}
+            )
+
+        if role == 'jury':
+            if jury_member is None and instance is not None:
+                try:
+                    jury_member = instance.jury_member_account.jury_member
+                except AttributeError:
+                    jury_member = None
+            if jury_member is None:
+                raise serializers.ValidationError(
+                    {'jury_member_id': 'Un compte jury doit être lié à un membre existant.'}
+                )
+            linked_account = JuryMemberAccount.objects.filter(
+                jury_member=jury_member
+            )
+            if instance is not None:
+                linked_account = linked_account.exclude(user=instance)
+            if linked_account.exists():
+                raise serializers.ValidationError(
+                    {'jury_member_id': 'Ce membre est déjà associé à un compte.'}
+                )
+        elif jury_member is not None:
+            raise serializers.ValidationError(
+                {'jury_member_id': 'Seul un compte jury peut être lié à un membre du jury.'}
             )
 
         if instance is not None:
@@ -200,21 +236,43 @@ class UserAccountSerializer(serializers.ModelSerializer):
             'email': student.email,
         }
 
+    def get_jury_profile(self, user):
+        try:
+            member = user.jury_member_account.jury_member
+        except AttributeError:
+            return None
+        return {
+            'id': member.id,
+            'name': member.member_name,
+            'jury_id': member.jury_id,
+            'jury_name': member.jury.name,
+        }
+
     @transaction.atomic
     def create(self, validated_data):
         role = validated_data.pop('role')
         student = validated_data.pop('student', None)
+        jury_member = validated_data.pop('jury_member', None)
         password = validated_data.pop('password')
-        user = User.objects.create_user(password=password, **validated_data)
+        # Le groupe SGSUS contrôle les droits API ; is_staff autorise séparément
+        # l'accès au site d'administration Django, sans accorder is_superuser.
+        user = User.objects.create_user(
+            password=password,
+            is_staff=role == 'admin',
+            **validated_data,
+        )
         self._assign_role(user, role)
         if role == 'student':
             StudentAccount.objects.create(user=user, student=student)
+        elif role == 'jury':
+            JuryMemberAccount.objects.create(user=user, jury_member=jury_member)
         return user
 
     @transaction.atomic
     def update(self, instance, validated_data):
         role = validated_data.pop('role', get_user_role(instance))
         student = validated_data.pop('student', None)
+        jury_member = validated_data.pop('jury_member', None)
         password = validated_data.pop('password', None)
 
         for field, value in validated_data.items():
@@ -231,6 +289,15 @@ class UserAccountSerializer(serializers.ModelSerializer):
             )
         else:
             StudentAccount.objects.filter(user=instance).delete()
+        if role == 'jury':
+            if jury_member is None:
+                jury_member = instance.jury_member_account.jury_member
+            JuryMemberAccount.objects.update_or_create(
+                user=instance,
+                defaults={'jury_member': jury_member},
+            )
+        else:
+            JuryMemberAccount.objects.filter(user=instance).delete()
         self._assign_role(instance, role)
         return instance
 
@@ -265,7 +332,7 @@ class ReviewSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
         fields = '__all__'
-        read_only_fields = ('id', 'author', 'created_at')
+        read_only_fields = ('id', 'author', 'author_role', 'created_at')
 
 
 # ==========================================
@@ -324,6 +391,12 @@ class DefenseSerializer(serializers.ModelSerializer):
     slot_end = serializers.DateTimeField(write_only=True)
     folder_detail = InternshipFolderSerializer(source='folder', read_only=True)
     jury_detail = JurySerializer(source='jury', read_only=True)
+    student_name = serializers.CharField(
+        source='folder.student.full_name',
+        read_only=True,
+    )
+    subject = serializers.CharField(source='folder.subject', read_only=True)
+    jury_name = serializers.CharField(source='jury.name', read_only=True)
 
     class Meta:
         model = Defense
@@ -331,8 +404,11 @@ class DefenseSerializer(serializers.ModelSerializer):
             'id',
             'folder',
             'folder_detail',
+            'student_name',
+            'subject',
             'jury',
             'jury_detail',
+            'jury_name',
             'room_name',
             'slot_start',
             'slot_end',
@@ -372,13 +448,26 @@ class DefenseSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         slot_range = validated_data.pop('slot_range')
-        return Defense.objects.create(slot_range=slot_range, **validated_data)
+        return conflicts.planifier_soutenance(
+            folder_id=validated_data.pop('folder').pk,
+            jury_id=validated_data.pop('jury').pk,
+            room_name=validated_data.pop('room_name'),
+            debut=slot_range.lower,
+            fin=slot_range.upper,
+            status=validated_data.pop('status', 'planifie'),
+        )
 
     def update(self, instance, validated_data):
-        slot_range = validated_data.pop('slot_range', None)
-        if slot_range is not None:
-            instance.slot_range = slot_range
-        return super().update(instance, validated_data)
+        slot_range = validated_data.pop('slot_range', instance.slot_range)
+        return conflicts.planifier_soutenance(
+            folder_id=validated_data.pop('folder', instance.folder).pk,
+            jury_id=validated_data.pop('jury', instance.jury).pk,
+            room_name=validated_data.pop('room_name', instance.room_name),
+            debut=slot_range.lower,
+            fin=slot_range.upper,
+            status=validated_data.pop('status', instance.status),
+            defense_id=instance.pk,
+        )
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

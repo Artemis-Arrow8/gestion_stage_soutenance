@@ -57,6 +57,14 @@ CREATE TABLE internship_folder (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Affectations nominatives : un encadreur ne consulte que les dossiers liés.
+CREATE TABLE IF NOT EXISTS folder_supervisor (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES auth_user(id) ON DELETE CASCADE,
+    folder_id BIGINT NOT NULL REFERENCES internship_folder(id) ON DELETE CASCADE,
+    CONSTRAINT unique_supervisor_folder_assignment UNIQUE (user_id, folder_id)
+);
+
 -- 4. Table Version de Document (Rapports)
 CREATE TABLE document_version (
     id SERIAL PRIMARY KEY,
@@ -70,6 +78,7 @@ CREATE TABLE document_version (
 CREATE TABLE review (
     id SERIAL PRIMARY KEY,
     document_version_id INT REFERENCES document_version(id) ON DELETE CASCADE,
+    author_id INT REFERENCES auth_user(id) ON DELETE SET NULL,
     author_role VARCHAR(50) NOT NULL, -- 'encadreur' ou 'tuteur'
     decision VARCHAR(50) NOT NULL,    -- 'favorable' ou 'defavorable'
     comments TEXT,
@@ -89,6 +98,13 @@ CREATE TABLE jury_member (
     jury_id INT REFERENCES jury(id) ON DELETE CASCADE,
     member_name VARCHAR(255) NOT NULL,
     role_in_jury VARCHAR(100) NOT NULL -- 'president', 'rapporteur', 'examinateur'
+);
+
+CREATE TABLE IF NOT EXISTS jury_member_account (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL UNIQUE REFERENCES auth_user(id) ON DELETE CASCADE,
+    jury_member_id INTEGER NOT NULL UNIQUE
+        REFERENCES jury_member(id) ON DELETE CASCADE
 );
 
 -- 8. Table Soutenance

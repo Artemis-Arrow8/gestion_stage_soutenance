@@ -43,6 +43,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   bool loading = true;
   String? error;
   bool _initialise = false;
+  bool _peutTeleverser = false;
   bool _peutDonnerAvis = false;
   String _q = '';
   String _filtre = 'Tous';
@@ -54,9 +55,14 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     _initialise = true;
 
     final auth = context.read<AuthProvider>();
-    service = DocumentService(accessToken: auth.accessToken);
-    _peutDonnerAvis =
-        const {'admin', 'responsible', 'supervisor'}.contains(auth.role);
+    service = DocumentService(
+      accessToken: auth.accessToken,
+      accessTokenProvider: () => auth.accessToken,
+      refreshAccessToken: auth.refreshAccessToken,
+    );
+    _peutTeleverser =
+        const {'admin', 'responsible', 'student'}.contains(auth.role);
+    _peutDonnerAvis = const {'admin', 'supervisor'}.contains(auth.role);
 
     loadFolders();
   }
@@ -367,11 +373,13 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                   style: TextStyle(fontSize: 12, color: AppColors.grey))
             else
               for (final document in docs) _docRow(document),
-            const SizedBox(height: 14),
-            SgButton('Ajouter un document PDF',
-                icon: Icons.upload_file_rounded,
-                expand: true,
-                onPressed: () => upload(folderId)),
+            if (_peutTeleverser) ...[
+              const SizedBox(height: 14),
+              SgButton('Ajouter un document PDF',
+                  icon: Icons.upload_file_rounded,
+                  expand: true,
+                  onPressed: () => upload(folderId)),
+            ],
           ],
         ),
       ),
@@ -634,8 +642,8 @@ class _AvisSheetState extends State<_AvisSheet> {
               RadioGroup<String>(
                 groupValue: _decision,
                 onChanged: (valeur) => setState(() => _decision = valeur),
-                child: Column(
-                  children: const [
+                child: const Column(
+                  children: [
                     RadioListTile<String>(
                       value: 'favorable',
                       title: Text('Favorable (valider le document)',

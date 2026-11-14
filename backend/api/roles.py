@@ -1,6 +1,6 @@
 """Résolution des rôles SGSUS à partir des groupes et profils Django."""
 
-ROLE_GROUPS = ('admin', 'student', 'supervisor', 'responsible')
+ROLE_GROUPS = ('admin', 'student', 'supervisor', 'responsible', 'jury')
 
 
 def has_role_group(user, role):
@@ -14,6 +14,11 @@ def has_role_group(user, role):
             return user.student_account is not None
         except AttributeError:
             return getattr(user, 'role', None) == 'student'
+    if role == 'jury':
+        try:
+            return user.jury_member_account is not None
+        except AttributeError:
+            return False
     groups = getattr(user, 'groups', None)
     return groups.filter(name=role).exists() if groups is not None else False
 
@@ -23,7 +28,7 @@ def get_user_role(user):
     if not getattr(user, 'is_authenticated', False):
         return None
 
-    for role in ('admin', 'responsible', 'supervisor', 'student'):
+    for role in ('admin', 'responsible', 'supervisor', 'jury', 'student'):
         if has_role_group(user, role):
             return role
     return None

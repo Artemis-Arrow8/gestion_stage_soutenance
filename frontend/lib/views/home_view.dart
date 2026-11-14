@@ -2,11 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:gestion_stage_soutenance/providers/auth_provider.dart';
 
+import '../screens/accounts_screen.dart';
+import '../screens/campaigns_screen.dart';
+import '../screens/documents_screen.dart';
+import '../screens/conflicts_screen.dart';
+import '../screens/jury_screen.dart';
+import '../screens/planning_screen.dart';
+import '../screens/rooms_screen.dart';
+
 /// Vue principale du tableau de bord (HomeView).
 /// Adapte dynamiquement l'affichage en fonction du rôle de l'utilisateur connecté
-/// (admin, student, supervisor, responsible).
+/// (admin, student, supervisor, responsible, jury).
 class HomeView extends StatelessWidget {
-  const HomeView({Key? key}) : super(key: key);
+  const HomeView({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -25,7 +33,8 @@ class HomeView extends StatelessWidget {
       );
     }
 
-    final role = authProvider.role ?? 'student';
+    // Un rôle absent ne doit pas être interprété comme un compte étudiant.
+    final role = authProvider.role ?? '';
 
     return Scaffold(
       appBar: AppBar(
@@ -49,10 +58,7 @@ class HomeView extends StatelessWidget {
             const SizedBox(height: 24),
             const Text(
               "MES MODULES & ACTIONS",
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             // Contenu dynamique selon le rôle
@@ -77,10 +83,7 @@ class HomeView extends StatelessWidget {
         children: [
           Text(
             user['full_name'] ?? user['username'] ?? 'Utilisateur',
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 4),
           Text(
@@ -110,38 +113,193 @@ class HomeView extends StatelessWidget {
               title: "Gestion des Campagnes",
               subtitle: "Configurer les années académiques et sessions",
               icon: Icons.calendar_today,
-              onTap: () {},
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CampaignsScreen()),
+              ),
             ),
             _buildActionCard(
               title: "Gestion des Utilisateurs & Rôles",
               subtitle: "Administrer les comptes et attributions",
               icon: Icons.people,
-              onTap: () {},
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AccountsScreen()),
+              ),
+            ),
+            _buildActionCard(
+              title: "Planning des soutenances",
+              subtitle: "Consulter et organiser les créneaux",
+              icon: Icons.event_available,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PlanningScreen()),
+              ),
+            ),
+            _buildActionCard(
+              title: "Documents",
+              subtitle: "Consulter les dossiers et versions",
+              icon: Icons.description,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const DocumentsScreen()),
+              ),
+            ),
+            _buildActionCard(
+              title: "Gestion des salles",
+              subtitle: "Consulter et administrer les salles",
+              icon: Icons.meeting_room,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const RoomsScreen()),
+              ),
+            ),
+            _buildActionCard(
+              title: "Gestion des jurys",
+              subtitle: "Consulter les jurys et leurs membres",
+              icon: Icons.groups,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const JuryScreen()),
+              ),
+            ),
+            _buildActionCard(
+              title: "Conflits de planning",
+              subtitle: "Consulter les conflits détectés",
+              icon: Icons.warning_amber,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ConflictsScreen()),
+              ),
+            ),
+          ],
+        );
+
+      case 'responsible':
+        return Column(
+          children: [
+            _buildActionCard(
+              title: "Gestion des Campagnes",
+              subtitle: "Configurer les années académiques et sessions",
+              icon: Icons.calendar_today,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CampaignsScreen()),
+              ),
+            ),
+            _buildActionCard(
+              title: "Validation des Dossiers de Stage",
+              subtitle: "Consulter et évaluer les propositions de stage",
+              icon: Icons.folder_shared,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const DocumentsScreen()),
+              ),
+            ),
+            _buildActionCard(
+              title: "Planification des Soutenances",
+              subtitle: "Consulter et organiser les créneaux",
+              icon: Icons.event_available,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PlanningScreen()),
+              ),
+            ),
+            _buildActionCard(
+              title: "Gestion des salles",
+              subtitle: "Consulter et administrer les salles",
+              icon: Icons.meeting_room,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const RoomsScreen()),
+              ),
+            ),
+            _buildActionCard(
+              title: "Gestion des jurys",
+              subtitle: "Consulter les jurys et leurs membres",
+              icon: Icons.groups,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const JuryScreen()),
+              ),
+            ),
+            _buildActionCard(
+              title: "Conflits de planning",
+              subtitle: "Consulter les conflits détectés",
+              icon: Icons.warning_amber,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ConflictsScreen()),
+              ),
             ),
           ],
         );
 
       case 'supervisor':
-      case 'responsible':
         return Column(
           children: [
             _buildActionCard(
-              title: "Validation des Dossiers de Stage",
-              subtitle: "Consulter et évaluer les propositions de stage",
+              title: "Dossiers affectés et avis d'encadrement",
+              subtitle: "Consulter les rapports et donner un avis",
               icon: Icons.folder_shared,
-              onTap: () {},
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const DocumentsScreen()),
+              ),
             ),
+          ],
+        );
+
+      case 'jury':
+        return Column(
+          children: [
             _buildActionCard(
-              title: "Planification des Soutenances",
-              subtitle: "Affecter les salles et constituer les jurys",
+              title: "Mon planning de jury",
+              subtitle: "Consulter les soutenances qui me sont affectées",
               icon: Icons.event_available,
-              onTap: () {},
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PlanningScreen()),
+              ),
             ),
           ],
         );
 
       case 'student':
-      default:
         return Column(
           children: [
-            _buildActionCard
+            _buildActionCard(
+              title: "Mon dossier et mes documents",
+              subtitle: "Consulter l'avancement et les rapports déposés",
+              icon: Icons.description,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const DocumentsScreen()),
+              ),
+            ),
+          ],
+        );
+      default:
+        return const Center(
+          child: Text("Le rôle de ce compte n'est pas reconnu."),
+        );
+    }
+  }
+
+  Widget _buildActionCard({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    return Card(
+      child: ListTile(
+        leading: Icon(icon),
+        title: Text(title),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: onTap,
+      ),
+    );
+  }
+}

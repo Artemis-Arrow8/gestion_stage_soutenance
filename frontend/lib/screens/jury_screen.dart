@@ -160,7 +160,7 @@ class _JuryScreenState extends State<JuryScreen> {
           subtitle:
               'Membres, spécialités, disponibilités et affectations aux soutenances.',
           actions: [
-            if (Session.peutGerer)
+            if (Session.peutGerer(context))
               SgButton('Ajouter un membre',
                   icon: Icons.person_add_alt_1_rounded,
                   onPressed: () => _editer()),
@@ -241,7 +241,7 @@ class _JuryScreenState extends State<JuryScreen> {
                                         icon: Icons.edit_outlined,
                                         tooltip: 'Modifier',
                                         tone: SgTone.gold,
-                                        onPressed: Session.peutGerer
+                                        onPressed: Session.peutGerer(context)
                                             ? () => _editer(membre: m)
                                             : null),
                                   ],
@@ -307,7 +307,7 @@ class _JuryScreenState extends State<JuryScreen> {
                                         icon: Icons.edit_outlined,
                                         tooltip: 'Modifier',
                                         tone: SgTone.gold,
-                                        onPressed: Session.peutGerer
+                                        onPressed: Session.peutGerer(context)
                                             ? () => _editer(membre: m)
                                             : null),
                                   ]),

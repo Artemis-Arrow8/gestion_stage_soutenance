@@ -18,17 +18,21 @@ dependencies:
   provider: ^6.1.1
 
   # Stockage sécurisé des tokens JWT (accessToken / refreshToken)
-  flutter_secure_storage: ^9.0.0
+  flutter_secure_storage: ^11.2.0
 
   # Stockage local simple de données légères
   shared_preferences: ^2.2.2
 
   # Requêtes HTTP vers l'API Django REST Framework
   http: ^1.2.0
+  file_picker: 13.3.2
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  integration_test:
+    sdk: flutter
+  flutter_secure_storage_platform_interface: ^2.1.1
 
   # Linting et bonnes pratiques de code Flutter
   flutter_lints: ^3.0.0

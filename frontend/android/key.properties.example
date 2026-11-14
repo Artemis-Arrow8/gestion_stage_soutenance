@@ -1,0 +1,6 @@
+# Copier ce modèle vers key.properties, ignoré par Git, puis remplir les secrets.
+# Le chemin du keystore est relatif au dossier frontend/android.
+storeFile=keystore/sgsus-release.jks
+keyAlias=sgsus
+storePassword=REMPLACER_PAR_UN_SECRET
+keyPassword=REMPLACER_PAR_UN_SECRET

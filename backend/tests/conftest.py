@@ -1,10 +1,10 @@
 """
 Configuration pytest du module planification (Tâche 4).
 
-Tous les modèles sont `managed = False` : Django ne crée aucune table dans la
-base de test. On charge donc `database/schema.sql` (source de vérité du
-groupe, contraintes d'exclusion EXG01 comprises) dans la base de test avant
-le premier test qui touche la base.
+Les tables métier hors `Review` et `StudentAccount` restent gérées par le
+schéma SQL historique. On charge donc `database/schema.sql` (notamment les
+contraintes d'exclusion EXG01) dans la base de test avant le premier test qui
+touche ces tables.
 
 Prérequis : PostgreSQL (jamais SQLite : tstzrange et les contraintes
 d'exclusion n'existent que dans PostgreSQL) et le droit de créer l'extension

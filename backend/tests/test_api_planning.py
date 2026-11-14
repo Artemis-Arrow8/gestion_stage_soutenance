@@ -10,6 +10,7 @@ Hypothèse d'accès : les routes ne demandent pas encore d'authentification.
 from datetime import datetime
 
 import pytest
+from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -21,8 +22,15 @@ pytestmark = [pytest.mark.django_db, pytest.mark.usefixtures("salles_demo")]
 
 
 @pytest.fixture
-def client():
-    return APIClient()
+def client(db):
+    client = APIClient()
+    user = get_user_model().objects.create_superuser(
+        username="planning_test_admin",
+        email="planning-admin@example.test",
+        password="Sgsus-Test-Password!2026",
+    )
+    client.force_authenticate(user=user)
+    return client
 
 
 def _payload(dossier, jury, salle="Salle 101",

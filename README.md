@@ -4,7 +4,13 @@ SGSUS est une application de gestion des stages et des soutenances universitaire
 
 ## Configuration locale
 
-1. Copier `.env.example` vers `.env`, puis définir un mot de passe PostgreSQL local et une clé Django privée. Ne jamais publier `.env`.
+1. Créer `.env` s’il n’existe pas, puis remplacer les valeurs d’exemple, notamment le mot de passe PostgreSQL et la clé Django. Ne jamais publier `.env`. Le modèle de développement est [.env.example](./.env.example) ; pour un reverse proxy HTTPS, partir de [.env.production.example](./.env.production.example).
+
+   ```powershell
+   if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+   ```
+
+   En local, garder `DJANGO_DEBUG=True`. Pour un serveur, configurer `DJANGO_DEBUG=False`, une clé aléatoire d’au moins 50 caractères, les hôtes autorisés et HTTPS.
 2. Démarrer PostgreSQL et installer les dépendances backend :
 
    ```powershell
@@ -27,18 +33,23 @@ SGSUS est une application de gestion des stages et des soutenances universitaire
 
 ## Docker Compose
 
-Après avoir configuré `.env`, démarrer les services avec `docker compose up --build`, puis appliquer les migrations dans le conteneur backend :
+Après avoir configuré `.env`, valider et démarrer les services. Compose utilise le port PostgreSQL interne 5432 entre conteneurs, même si `DB_PORT` configure un autre port local.
 
 ```powershell
-docker compose exec backend python manage.py migrate
+docker compose config --quiet
+docker compose up --build -d
+docker compose exec backend python manage.py migrate --noinput
 docker compose exec backend python manage.py createsuperuser
+docker compose logs --tail 100 backend
 ```
 
-Le backend utilise le service PostgreSQL `db`. Pour une base déjà utilisée, sauvegarder et examiner l'état des migrations avant de les appliquer.
+Le backend utilise Gunicorn, tourne sous un compte non privilégié et sert les fichiers statiques préparés dans l’image. Pour une base déjà utilisée, sauvegarder et examiner l’état des migrations avant de les appliquer. Le guide de déploiement temporaire est dans [docs/guide-exploitation.md](docs/guide-exploitation.md).
 
-## Comptes étudiants
+Après migration, les données de présentation se créent avec `python manage.py seed_sgsus`. La commande requiert `SGSUS_DEMO_PASSWORD`, est idempotente et refuse par défaut `DJANGO_DEBUG=False`. Les identifiants de test et les consignes figurent dans [docs/guide-exploitation.md](docs/guide-exploitation.md).
 
-Un administrateur crée un utilisateur dans l'administration Django puis l'associe à une fiche existante au moyen de `StudentAccount`. L'étudiant se connecte avec les identifiants fournis par l'établissement. Django hache le mot de passe ; aucun mot de passe n'est stocké dans la table `student`.
+## Comptes et rôles
+
+Un administrateur crée les comptes depuis l’API de gestion des comptes. Un étudiant est associé à une fiche via `StudentAccount` ; un membre du jury est associé à une fiche via `JuryMemberAccount`. Django hache les mots de passe ; aucun mot de passe n’est stocké dans les tables métier.
 
 Les routes d’authentification, de gestion des comptes et les permissions par rôle sont détaillées dans [docs/authentification.md](docs/authentification.md).
 

@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../models/defense.dart';
+import '../providers/auth_provider.dart';
+import '../services/planning_service.dart';
 import '../services/planning_store.dart';
 import '../theme/app_theme.dart';
 import '../utils/dates.dart';
@@ -22,6 +25,11 @@ class PlanningScreen extends StatefulWidget {
 }
 
 class _PlanningScreenState extends State<PlanningScreen> {
+  late PlanningService _service;
+  bool _initialise = false;
+  bool _loading = true;
+  bool _peutGerer = false;
+  String? _error;
   PlanningView _view = PlanningView.mois;
   DateTime _cursor = DateTime.now();
   DateTime _selected = DateTime.now();
@@ -29,6 +37,39 @@ class _PlanningScreenState extends State<PlanningScreen> {
   String? _jury;
   String _annee = 'Toutes';
   String _q = '';
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialise) return;
+    _initialise = true;
+    final auth = context.read<AuthProvider>();
+    _service = PlanningService(
+      accessToken: auth.accessToken,
+      accessTokenProvider: () => auth.accessToken,
+      refreshAccessToken: auth.refreshAccessToken,
+    );
+    _peutGerer = const {'admin', 'responsible'}.contains(auth.role);
+    _charger();
+  }
+
+  Future<void> _charger() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await PlanningStore.refresh(_service, loadCatalog: _peutGerer);
+      if (!mounted) return;
+      setState(() => _loading = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+    }
+  }
 
   List<String> _annees(List<Defense> all) {
     final set = <String>{anneeScolaire(DateTime.now())};
@@ -97,18 +138,48 @@ class _PlanningScreenState extends State<PlanningScreen> {
         return SgPage(
           section: AppSection.planning,
           title: 'Planning des soutenances',
-          subtitle: 'Consultez, filtrez et organisez les soutenances.',
+          subtitle: 'Planning synchronisé avec le serveur.',
           actions: [
-            if (Session.peutGerer)
+            SgButton('Actualiser',
+                icon: Icons.refresh_rounded,
+                variant: SgBtnVariant.outline,
+                onPressed: _charger),
+            if (_peutGerer)
               SgButton('Nouvelle soutenance',
                   icon: Icons.add_rounded,
-                  onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const DefenseFormScreen()),
-                      )),
+                  onPressed: () async {
+                    final created = await Navigator.push<bool>(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const DefenseFormScreen(),
+                      ),
+                    );
+                    if (created == true) await _charger();
+                  }),
           ],
-          child: Column(
+          child: _loading
+              ? const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(48),
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              : _error != null
+                  ? SgCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Impossible de charger le planning.'),
+                          const SizedBox(height: 8),
+                          Text(_error!),
+                          const SizedBox(height: 12),
+                          SgButton('Réessayer',
+                              icon: Icons.refresh_rounded,
+                              onPressed: _charger),
+                        ],
+                      ),
+                    )
+                  : Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _toolbar(all),

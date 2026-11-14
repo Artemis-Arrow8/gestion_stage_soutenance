@@ -1,4 +1,4 @@
-package com.example.frontend
+package com.artemisarrow8.sgsus
 
 import io.flutter.embedding.android.FlutterActivity
 

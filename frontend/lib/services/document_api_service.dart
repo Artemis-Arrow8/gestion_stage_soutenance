@@ -24,7 +24,7 @@ class DocumentApiService {
   String get _base =>
       baseUrl.replaceFirst(RegExp(r'/+$'), '');
 
-  // Récupérer les documents
+  /// Récupère les versions accessibles via le ViewSet DRF.
   Future<List<DocumentVersion>> getDocuments({
     required String accessToken,
   }) async {
@@ -51,18 +51,18 @@ class DocumentApiService {
     throw Exception(_getErrorMessage(response));
   }
 
-  // Déposer un document PDF
+  /// Dépose un PDF via l’endpoint de téléversement sécurisé.
   Future<DocumentVersion> uploadDocument({
     required int folderId,
     required String filePath,
     required String accessToken,
   }) async {
-    final uri = Uri.parse('$_base/document-versions/upload/');
+    final uri = Uri.parse('$_base/documents/upload/');
 
     final request = http.MultipartRequest('POST', uri);
 
     request.headers.addAll(_headers(accessToken));
-    request.fields['folder'] = folderId.toString();
+    request.fields['folder_id'] = folderId.toString();
 
     request.files.add(
       await http.MultipartFile.fromPath('file', filePath),
@@ -74,21 +74,19 @@ class DocumentApiService {
     if (response.statusCode == 201) {
       final data = jsonDecode(response.body);
 
-      return DocumentVersion.fromJson(
-        data['document'] as Map<String, dynamic>,
-      );
+      return DocumentVersion.fromJson(data as Map<String, dynamic>);
     }
 
     throw Exception(_getErrorMessage(response));
   }
 
-  // Télécharger un document
+  /// Télécharge une version depuis l’endpoint autorisé par le backend.
   Future<Uint8List> downloadDocument({
     required int documentId,
     required String accessToken,
   }) async {
     final uri = Uri.parse(
-      '$_base/document-versions/$documentId/download/',
+      '$_base/documents/download/$documentId/',
     );
 
     final response = await _client.get(

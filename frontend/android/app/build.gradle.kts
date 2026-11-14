@@ -1,11 +1,48 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// La signature release provient d'un fichier local ignoré par Git.
+val signingPropertiesFile = rootProject.file("key.properties")
+val signingProperties = Properties()
+if (signingPropertiesFile.exists()) {
+    signingPropertiesFile.inputStream().use(signingProperties::load)
+}
+
+val releaseTaskRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+val signingPropertyNames = listOf(
+    "storeFile",
+    "keyAlias",
+    "storePassword",
+    "keyPassword",
+)
+val missingSigningProperties = signingPropertyNames.filter { name ->
+    val value = signingProperties.getProperty(name)?.trim()
+    value.isNullOrEmpty() || value.startsWith("REMPLACER")
+}
+val releaseKeystorePath = signingProperties.getProperty("storeFile")?.trim()
+val releaseKeystore = releaseKeystorePath?.let(rootProject::file)
+
+if (releaseTaskRequested && missingSigningProperties.isNotEmpty()) {
+    throw GradleException(
+        "Signature release manquante : compléter frontend/android/key.properties " +
+            "à partir de key.properties.example."
+    )
+}
+if (releaseTaskRequested && releaseKeystore?.exists() != true) {
+    throw GradleException(
+        "Keystore release introuvable. Vérifier la propriété storeFile dans key.properties."
+    )
+}
+
 android {
-    namespace = "com.example.frontend"
+    namespace = "com.artemisarrow8.sgsus"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -15,8 +52,8 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.frontend"
+        // Identifiant stable de l'application Android SGSUS.
+        applicationId = "com.artemisarrow8.sgsus"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -29,11 +66,22 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (missingSigningProperties.isEmpty() && releaseKeystore != null) {
+            create("release") {
+                keyAlias = signingProperties.getProperty("keyAlias")
+                keyPassword = signingProperties.getProperty("keyPassword")
+                storeFile = releaseKeystore
+                storePassword = signingProperties.getProperty("storePassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            if (missingSigningProperties.isEmpty() && releaseKeystore != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 }

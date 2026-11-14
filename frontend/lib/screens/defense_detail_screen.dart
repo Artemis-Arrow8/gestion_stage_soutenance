@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../models/defense.dart';
+import '../providers/auth_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/dates.dart';
 import '../widgets/app_shell.dart';
@@ -26,13 +28,15 @@ class DefenseDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final d = parseDefenseDate(defense.date);
+    final role = context.read<AuthProvider>().role;
+    final peutGerer = const {'admin', 'responsible'}.contains(role);
 
     return SgPage(
       section: AppSection.planning,
       title: 'Détails de la soutenance',
       subtitle: 'Fiche complète : étudiant, créneau, salle et jury.',
       actions: [
-        if (Session.peutGerer)
+        if (peutGerer)
           SgButton('Dupliquer',
               icon: Icons.copy_rounded,
               variant: SgBtnVariant.outline,
@@ -51,8 +55,10 @@ class DefenseDetailScreen extends StatelessWidget {
           _infos(d),
           const SizedBox(height: 16),
           _jury(),
-          const SizedBox(height: 16),
-          _documents(context),
+          if (role != 'jury') ...[
+            const SizedBox(height: 16),
+            _documents(context),
+          ],
         ],
       ),
     );

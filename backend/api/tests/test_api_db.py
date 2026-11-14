@@ -12,21 +12,33 @@ Chaque erreur métier doit renvoyer HTTP 400 avec un message exploitable par
 Flutter (structure par champ ou {"detail": ...}).
 """
 
+from io import BytesIO
+from datetime import datetime
+from unittest.mock import patch
+
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db.backends.postgresql.psycopg_any import DateTimeTZRange
 from django.urls import reverse
 from django.utils import timezone
+from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from api.models import (
     Campaign,
+    DocumentVersion,
+    Defense,
     InternshipFolder,
     Jury,
     JuryMember,
+    JuryMemberAccount,
     Room,
     Student,
+    StudentAccount,
 )
 
-UTC = timezone.utc
+UTC = timezone.UTC
 JOUR = "2026-07-10"
+User = get_user_model()
 
 
 class DonneesApi(APITestCase):
@@ -63,6 +75,14 @@ class DonneesApi(APITestCase):
             jury=cls.jury2, member_name="C. Sanogo", role_in_jury="president"
         )
 
+    def setUp(self):
+        admin = User.objects.create_superuser(
+            username="planning_admin",
+            email="planning-admin@example.test",
+            password="Sgsus-Test-Password!2026",
+        )
+        self.client.force_authenticate(user=admin)
+
     @staticmethod
     def creneau_iso(heure_debut, heure_fin):
         return (
@@ -76,7 +96,7 @@ class DonneesApi(APITestCase):
         debut, fin = self.creneau_iso(heure_debut, heure_fin)
         return {
             "folder": self.dossier.pk if dossier is None else dossier,
-            "jury": self.jury1.pk if jury is None else jury,
+            "jury": self.jury1.pk if jury is None else getattr(jury, "pk", jury),
             "room_name": salle or self.salle_a.name,
             "slot_start": debut,
             "slot_end": fin,
@@ -149,6 +169,51 @@ class JuryApiTests(DonneesApi):
         )
         self.assertEqual(reponse.status_code, 400)
         self.assertIn("role_in_jury", str(reponse.data))
+
+
+class JuryScopedApiTests(DonneesApi):
+    """Un compte jury ne voit que les soutenances de son propre jury."""
+
+    def test_jury_ne_lit_que_son_affectation_et_ne_peut_pas_ecrire(self):
+        membre = JuryMember.objects.filter(jury=self.jury1).first()
+        utilisateur = User.objects.create_user(
+            username="jury_scoped_user",
+            password="Sgsus-Test-Password!2026",
+        )
+        JuryMemberAccount.objects.create(user=utilisateur, jury_member=membre)
+        debut = datetime(2026, 7, 10, 8, tzinfo=UTC)
+        fin = datetime(2026, 7, 10, 10, tzinfo=UTC)
+        affectee = Defense.objects.create(
+            folder=self.dossier,
+            jury=self.jury1,
+            room_name="Salle Jury affectée",
+            slot_range=DateTimeTZRange(debut, fin, bounds="[)"),
+        )
+        hors_perimetre = Defense.objects.create(
+            folder=self.dossier,
+            jury=self.jury2,
+            room_name="Salle Jury non affectée",
+            slot_range=DateTimeTZRange(debut, fin, bounds="[)"),
+        )
+        self.client.force_authenticate(user=utilisateur)
+
+        planning = self.client.get(reverse("soutenance-planning"))
+        detail_interdit = self.client.get(
+            reverse("soutenance-detail", args=[hors_perimetre.pk])
+        )
+        creation_interdite = self.client.post(
+            reverse("soutenance-list"),
+            self.payload_soutenance(),
+            format="json",
+        )
+
+        ids_visibles = [
+            item["id"] for item in planning.data["soutenances"]
+        ]
+        self.assertEqual(planning.status_code, 200)
+        self.assertEqual(ids_visibles, [affectee.pk])
+        self.assertEqual(detail_interdit.status_code, 404)
+        self.assertEqual(creation_interdite.status_code, 403)
 
 
 class SoutenanceApiTests(DonneesApi):
@@ -355,3 +420,105 @@ class DisponibilitesApiTests(DonneesApi):
             {"date": "10/07/2026"},
         )
         self.assertEqual(reponse.status_code, 400)
+
+
+class DocumentsApiTests(DonneesApi):
+    """Vérifie le dépôt et le téléchargement selon le propriétaire étudiant."""
+
+    def setUp(self):
+        super().setUp()
+        self.etudiant_user = User.objects.create_user(
+            username="etudiant_documents",
+            password="Sgsus-Test-Password!2026",
+        )
+        StudentAccount.objects.create(
+            user=self.etudiant_user,
+            student=self.etudiant,
+        )
+        self.client.force_authenticate(user=self.etudiant_user)
+
+    def test_depot_pdf_valide_cree_une_version(self):
+        fichier = SimpleUploadedFile(
+            "rapport.pdf",
+            b"%PDF-1.4 contenu de test",
+            content_type="application/pdf",
+        )
+        with patch(
+            "api.documents.services.default_storage.save",
+            return_value="documents/rapport-aleatoire.pdf",
+        ):
+            reponse = self.client.post(
+                reverse("document-upload"),
+                {"folder_id": self.dossier.pk, "file": fichier},
+            )
+
+        self.assertEqual(reponse.status_code, 201, reponse.data)
+        document = DocumentVersion.objects.get(pk=reponse.data["id"])
+        self.assertEqual(document.folder_id, self.dossier.pk)
+        self.assertEqual(document.version_number, 1)
+        self.assertNotEqual(document.file_path, "rapport.pdf")
+
+    def test_depot_refuse_un_dossier_appartenant_a_un_autre_etudiant(self):
+        autre_etudiant = Student.objects.create(
+            student_number="2026-API-AUTRE",
+            full_name="Autre étudiant",
+            email="autre-api@etu-test.edu",
+        )
+        autre_dossier = InternshipFolder.objects.create(
+            student=autre_etudiant,
+            campaign=self.campagne,
+            company_name="Entreprise privée",
+            subject="Dossier privé",
+        )
+        fichier = SimpleUploadedFile(
+            "rapport.pdf",
+            b"%PDF-1.4 contenu de test",
+            content_type="application/pdf",
+        )
+
+        reponse = self.client.post(
+            reverse("document-upload"),
+            {"folder_id": autre_dossier.pk, "file": fichier},
+        )
+
+        self.assertEqual(reponse.status_code, 403)
+        self.assertEqual(DocumentVersion.objects.count(), 0)
+
+    def test_etudiant_telecharge_son_document_mais_pas_celui_d_un_autre(self):
+        document = DocumentVersion.objects.create(
+            folder=self.dossier,
+            version_number=1,
+            file_path="documents/own.pdf",
+        )
+        autre_etudiant = Student.objects.create(
+            student_number="2026-API-AUTRE",
+            full_name="Autre étudiant",
+            email="autre-api@etu-test.edu",
+        )
+        autre_dossier = InternshipFolder.objects.create(
+            student=autre_etudiant,
+            campaign=self.campagne,
+            company_name="Entreprise privée",
+            subject="Dossier privé",
+        )
+        document_prive = DocumentVersion.objects.create(
+            folder=autre_dossier,
+            version_number=1,
+            file_path="documents/private.pdf",
+        )
+        with patch(
+            "api.documents.views.default_storage.exists",
+            return_value=True,
+        ), patch(
+            "api.documents.views.default_storage.open",
+            return_value=BytesIO(b"%PDF-1.4 contenu de test"),
+        ):
+            reponse_autorisee = self.client.get(
+                reverse("document-download", args=[document.pk])
+            )
+            reponse_interdite = self.client.get(
+                reverse("document-download", args=[document_prive.pk])
+            )
+
+        self.assertEqual(reponse_autorisee.status_code, 200)
+        self.assertEqual(reponse_interdite.status_code, 403)

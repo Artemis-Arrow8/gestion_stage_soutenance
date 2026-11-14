@@ -1,5 +1,7 @@
 class Defense {
   final int id;
+  final int? folderId;
+  final int? juryId;
   final String studentName;
   final String subject;
   final String date;
@@ -11,6 +13,8 @@ class Defense {
 
   Defense({
     required this.id,
+    this.folderId,
+    this.juryId,
     required this.studentName,
     required this.subject,
     required this.date,
@@ -22,15 +26,33 @@ class Defense {
   });
 
   factory Defense.fromJson(Map<String, dynamic> json) {
+    final debut = DateTime.tryParse(json['slot_start']?.toString() ?? '');
+    final fin = DateTime.tryParse(json['slot_end']?.toString() ?? '');
+    final juryDetail = json['jury_detail'];
+
     return Defense(
-      id: json['id'],
-      studentName: json['student_name'] ?? '',
+      id: int.tryParse(json['id']?.toString() ?? '') ?? 0,
+      folderId: int.tryParse(json['folder']?.toString() ?? ''),
+      juryId: int.tryParse(json['jury']?.toString() ?? ''),
+      studentName: json['student_name']?.toString() ?? '',
       subject: json['subject'] ?? '',
-      date: json['date'] ?? '',
-      startTime: json['start_time'] ?? '',
-      endTime: json['end_time'] ?? '',
+      date: debut == null
+          ? ''
+          : '${debut.toLocal().year.toString().padLeft(4, '0')}-'
+              '${debut.toLocal().month.toString().padLeft(2, '0')}-'
+              '${debut.toLocal().day.toString().padLeft(2, '0')}',
+      startTime: debut == null
+          ? ''
+          : '${debut.toLocal().hour.toString().padLeft(2, '0')}:'
+              '${debut.toLocal().minute.toString().padLeft(2, '0')}',
+      endTime: fin == null
+          ? ''
+          : '${fin.toLocal().hour.toString().padLeft(2, '0')}:'
+              '${fin.toLocal().minute.toString().padLeft(2, '0')}',
       roomName: json['room_name'] ?? '',
-      juryName: json['jury_name'] ?? '',
+      juryName: json['jury_name']?.toString() ??
+          (juryDetail is Map ? juryDetail['name']?.toString() : null) ??
+          '',
       status: json['status'] ?? '',
     );
   }
@@ -49,6 +71,8 @@ class Defense {
   }) {
     return Defense(
       id: id,
+      folderId: folderId,
+      juryId: juryId,
       studentName: studentName ?? this.studentName,
       subject: subject ?? this.subject,
       date: date ?? this.date,

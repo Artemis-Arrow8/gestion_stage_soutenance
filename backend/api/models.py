@@ -64,11 +64,36 @@ class StudentAccount(models.Model):
     )
 
     class Meta:
-        managed = False
         db_table = 'student_account'
 
     def __str__(self):
         return f"{self.user.username} - {self.student.full_name}"
+
+
+class FolderSupervisor(models.Model):
+    """Associe un encadreur aux seuls dossiers qu'il est autorisé à suivre."""
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='folder_assignments',
+    )
+    folder = models.ForeignKey(
+        'InternshipFolder',
+        on_delete=models.CASCADE,
+        related_name='supervisor_assignments',
+    )
+
+    class Meta:
+        db_table = 'folder_supervisor'
+        constraints = [
+            models.UniqueConstraint(
+                fields=('user', 'folder'),
+                name='unique_supervisor_folder_assignment',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.user.get_username()} - dossier #{self.folder_id}"
 
 
 # ==========================================
@@ -131,7 +156,6 @@ class Review(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        managed = False
         db_table = 'review'
 
 
@@ -179,6 +203,26 @@ class JuryMember(models.Model):
 
     def __str__(self):
         return f"{self.member_name} ({self.role_in_jury})"
+
+
+class JuryMemberAccount(models.Model):
+    """Lie un compte Django à un membre précis du jury."""
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='jury_member_account',
+    )
+    jury_member = models.OneToOneField(
+        JuryMember,
+        on_delete=models.CASCADE,
+        related_name='account',
+    )
+
+    class Meta:
+        db_table = 'jury_member_account'
+
+    def __str__(self):
+        return f"{self.user.get_username()} - {self.jury_member.member_name}"
 
 
 class Defense(models.Model):

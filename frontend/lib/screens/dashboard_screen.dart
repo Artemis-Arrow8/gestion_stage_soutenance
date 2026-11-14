@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../models/defense.dart';
+import '../providers/auth_provider.dart';
 import '../services/conflict_report.dart';
 import '../services/planning_store.dart';
 import '../theme/app_theme.dart';
@@ -11,15 +13,17 @@ import 'conflicts_screen.dart';
 import 'defense_detail_screen.dart';
 import 'defense_form_screen.dart';
 import 'documents_screen.dart';
-import 'jury_screen.dart';
 import 'planning_screen.dart';
-import 'rooms_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    final name = auth.user?['full_name']?.toString() ??
+        auth.user?['username']?.toString() ??
+        'Utilisateur';
     return ValueListenableBuilder<List<Defense>>(
       valueListenable: PlanningStore.defenses,
       builder: (context, defenses, _) {
@@ -38,11 +42,11 @@ class DashboardScreen extends StatelessWidget {
 
         return SgPage(
           section: AppSection.dashboard,
-          title: 'Bonjour, Mariam',
+          title: 'Bonjour, $name',
           subtitle:
               'Voici l’état de vos soutenances pour l’année ${anneeScolaire(today)}.',
           actions: [
-            if (Session.peutGerer)
+            if (Session.peutGerer(context))
               SgButton('Nouvelle soutenance',
                   icon: Icons.add_rounded,
                   onPressed: () => _push(context, const DefenseFormScreen())),
@@ -74,7 +78,7 @@ class DashboardScreen extends StatelessWidget {
                   title: 'Aucune soutenance à venir',
                   message:
                       'Créez une première soutenance pour alimenter votre planning.',
-                  action: Session.peutGerer
+                  action: Session.peutGerer(context)
                       ? SgButton('Créer une soutenance',
                           icon: Icons.add_rounded,
                           onPressed: () =>
@@ -258,7 +262,7 @@ class DashboardScreen extends StatelessWidget {
                           final p = parseDefenseDate(d.date);
                           return p != null && sameDay(p, j);
                         }).length;
-                        final maxCount = 3;
+                        const maxCount = 3;
                         final h = 14.0 + (count / maxCount).clamp(0.0, 1.0) * 46;
                         return Container(
                           height: h,
@@ -315,23 +319,23 @@ class DashboardScreen extends StatelessWidget {
 
   Widget _actions(BuildContext context, int conflits) {
     final items = <_Action>[
-      if (Session.peutGerer) ...[
+      if (Session.peutGerer(context)) ...[
         _Action('Nouvelle soutenance', 'Programmer une soutenance.',
             Icons.add_circle_outline_rounded, const DefenseFormScreen()),
         _Action('Planning', 'Vues jour, semaine et mois.',
             Icons.calendar_month_rounded, const PlanningScreen()),
-        _Action('Salles', 'Capacités et disponibilités.',
-            Icons.meeting_room_rounded, const RoomsScreen()),
-        _Action('Jurys', 'Membres et affectations.',
-            Icons.groups_2_rounded, const JuryScreen()),
         _Action('Conflits', '$conflits à traiter.', Icons.report_gmailerrorred_rounded,
             const ConflictsScreen()),
-      ] else ...[
-        _Action('Mon planning', 'Vos soutenances à venir.',
+      ] else if (context.read<AuthProvider>().role == 'jury') ...[
+        _Action('Mon planning de jury', 'Soutenances affectées à votre jury.',
             Icons.calendar_month_rounded, const PlanningScreen()),
+      ] else if (context.read<AuthProvider>().role == 'student') ...[
+        _Action('Mes documents', 'Dossiers et versions.',
+            Icons.folder_open_rounded, const DocumentsScreen()),
+      ] else if (context.read<AuthProvider>().role == 'supervisor') ...[
+        _Action('Dossiers affectés', 'Consulter les rapports et donner un avis.',
+            Icons.folder_open_rounded, const DocumentsScreen()),
       ],
-      _Action('Documents', 'Dossiers et versions.', Icons.folder_open_rounded,
-          const DocumentsScreen()),
     ];
 
     return LayoutBuilder(

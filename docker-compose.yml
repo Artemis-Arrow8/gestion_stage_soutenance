@@ -1,7 +1,6 @@
 services:
   db:
     image: postgres:17
-    container_name: gestion_stages_db
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
@@ -17,23 +16,35 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: gestion_stages_backend
+      context: .
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
     env_file:
       - .env
     environment:
       DB_HOST: db
+      DB_PORT: 5432
+      DJANGO_MEDIA_ROOT: /app/media
     ports:
-      - "8000:8000"
+      - "${DJANGO_BIND_ADDRESS:-127.0.0.1}:${DJANGO_PORT:-8000}:8000"
+    volumes:
+      - media_data:/app/media
     depends_on:
       db:
         condition: service_healthy
-    command: python manage.py runserver 0.0.0.0:8000
+      media-init:
+        condition: service_completed_successfully
+
+  media-init:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    user: "0:0"
+    command: ["sh", "-c", "chown -R app:app /app/media"]
+    restart: "no"
     volumes:
-      - ./backend:/app
-      - ./database:/database
+      - media_data:/app/media
 
 volumes:
   postgres_data:
+  media_data:
