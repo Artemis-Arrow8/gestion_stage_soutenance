@@ -33,6 +33,7 @@ services:
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - ./backend:/app
+      - ./database:/database
 
 volumes:
   postgres_data:

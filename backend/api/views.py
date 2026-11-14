@@ -1,341 +1,136 @@
-from django.db import IntegrityError, transaction
-from django.contrib.auth import get_user_model, authenticate
-from rest_framework.exceptions import PermissionDenied, ValidationError
-from rest_framework import mixins
-from rest_framework import viewsets
-from rest_framework.views import APIView
+from django.contrib.auth import get_user_model
+from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Campaign, Student, StudentAccount, InternshipFolder, DocumentVersion, Review, Jury, JuryMember, Defense, Assessment
-from .serializers import (
-    CampaignSerializer, StudentSerializer, InternshipFolderSerializer,
-    DocumentVersionSerializer, ReviewSerializer, JurySerializer, UserAccountSerializer,
-    JuryMemberSerializer, DefenseSerializer, AssessmentSerializer
-)
-from .permissions import (
-    IsAccountAdministrator,
-    IsAdminResponsibleOrStudent,
-    IsAdminOrPedagogicalResponsible,
-    IsSupervisor,
-)
-from .roles import get_user_role
 
+from .models import (
+    Assessment,
+    Campaign,
+    Defense,
+    DocumentVersion,
+    InternshipFolder,
+    Jury,
+    JuryMember,
+    Review,
+    Room,
+    Student,
+)
+from .serializers import (
+    AssessmentSerializer,
+    CampaignSerializer,
+    DefenseSerializer,
+    DocumentVersionSerializer,
+    InternshipFolderSerializer,
+    JuryMemberSerializer,
+    JurySerializer,
+    ReviewSerializer,
+    SalleSerializer,
+    StudentSerializer,
+    UserAccountSerializer,
+)
 
 User = get_user_model()
 
 
-def _student_for_user(user):
-    """Retourne l'étudiant associé à l'utilisateur authentifié."""
-    if isinstance(user, Student):
-        return user
-
-    account = getattr(user, 'student_account', None)
-    return account.student if account else None
-
-
 # ==========================================
-# VIEWSETS STANDARDS AVEC PERMISSIONS
+# 1. VUES MÉTIERS (ViewSets DRF)
 # ==========================================
 
 class CampaignViewSet(viewsets.ModelViewSet):
-    """ViewSet pour la gestion des campagnes académiques."""
-    queryset = Campaign.objects.all()
+    """Gestion des campagnes académiques."""
+    queryset = Campaign.objects.all().order_by('-id')
     serializer_class = CampaignSerializer
-    permission_classes = [IsAdminOrPedagogicalResponsible]
+    permission_classes = [permissions.IsAuthenticated]
 
 
 class StudentViewSet(viewsets.ModelViewSet):
-    """ViewSet pour la gestion des étudiants."""
+    """Gestion des étudiants."""
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
-    permission_classes = [IsAdminOrPedagogicalResponsible]
+    permission_classes = [permissions.IsAuthenticated]
 
 
 class InternshipFolderViewSet(viewsets.ModelViewSet):
-    """ViewSet pour les dossiers de stage."""
+    """Gestion des dossiers de stage."""
     queryset = InternshipFolder.objects.all()
     serializer_class = InternshipFolderSerializer
-    permission_classes = [IsAdminResponsibleOrStudent]
-
-    def get_queryset(self):
-        student = _student_for_user(self.request.user)
-        if student is None and get_user_role(self.request.user) in ('admin', 'responsible'):
-            return self.queryset
-        if student is None:
-            return self.queryset.none()
-        return self.queryset.filter(student=student)
-
-    def perform_create(self, serializer):
-        student = _student_for_user(self.request.user)
-        if student is not None:
-            serializer.save(student=student)
-        elif get_user_role(self.request.user) in ('admin', 'responsible'):
-            serializer.save()
-        else:
-            raise PermissionDenied("Aucun profil étudiant n'est associé à ce compte.")
-
-    def perform_update(self, serializer):
-        student = _student_for_user(self.request.user)
-        if student is not None:
-            serializer.save(student=student)
-        elif get_user_role(self.request.user) in ('admin', 'responsible'):
-            serializer.save()
-        else:
-            raise PermissionDenied("Aucun profil étudiant n'est associé à ce compte.")
+    permission_classes = [permissions.IsAuthenticated]
 
 
 class DocumentVersionViewSet(viewsets.ModelViewSet):
-    """ViewSet pour les versions de documents."""
+    """Gestion des versions de documents et rapports."""
     queryset = DocumentVersion.objects.all()
     serializer_class = DocumentVersionSerializer
-    permission_classes = [IsAdminResponsibleOrStudent]
-
-    def get_queryset(self):
-        student = _student_for_user(self.request.user)
-        if student is None and get_user_role(self.request.user) in ('admin', 'responsible'):
-            return self.queryset
-        if student is None:
-            return self.queryset.none()
-        return self.queryset.filter(folder__student=student)
-
-    def perform_create(self, serializer):
-        student = _student_for_user(self.request.user)
-        folder = serializer.validated_data.get('folder')
-        role = get_user_role(self.request.user)
-        if role in ('admin', 'responsible'):
-            serializer.save()
-        elif student is None or folder is None or folder.student_id != student.id:
-            raise PermissionDenied("Vous ne pouvez ajouter une version qu'à votre propre dossier.")
-        else:
-            serializer.save(folder=folder)
-
-    def perform_update(self, serializer):
-        student = _student_for_user(self.request.user)
-        folder = serializer.validated_data.get('folder', serializer.instance.folder)
-        role = get_user_role(self.request.user)
-        if role in ('admin', 'responsible'):
-            serializer.save()
-        elif student is None or folder.student_id != student.id:
-            raise PermissionDenied("Vous ne pouvez modifier que les versions de votre propre dossier.")
-        else:
-            serializer.save(folder=folder)
+    permission_classes = [permissions.IsAuthenticated]
 
 
 class ReviewViewSet(viewsets.ModelViewSet):
-    """ViewSet pour les avis (encadreurs/tuteurs)."""
+    """Gestion des avis (encadreur / tuteur)."""
     queryset = Review.objects.all()
     serializer_class = ReviewSerializer
-    permission_classes = [IsSupervisor]
+    permission_classes = [permissions.IsAuthenticated]
 
-    def get_queryset(self):
-        """Limite les encadreurs à leurs avis et réserve la vue globale à l’admin."""
-        if get_user_role(self.request.user) == 'admin':
-            return self.queryset
-        return self.queryset.filter(author=self.request.user)
 
-    def perform_create(self, serializer):
-        """Lie chaque nouvel avis au compte qui l’a effectivement créé."""
-        serializer.save(author=self.request.user)
+class SalleViewSet(viewsets.ModelViewSet):
+    """Catalogue des salles de soutenance (Tâche 4)."""
+    queryset = Room.objects.all().order_by('name')
+    serializer_class = SalleSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
 
 class JuryViewSet(viewsets.ModelViewSet):
-    """ViewSet pour la gestion des jurys."""
-    queryset = Jury.objects.all()
+    """Gestion des jurys de soutenance."""
+    queryset = Jury.objects.all().order_by('name')
     serializer_class = JurySerializer
-    permission_classes = [IsAdminOrPedagogicalResponsible]
+    permission_classes = [permissions.IsAuthenticated]
 
 
 class JuryMemberViewSet(viewsets.ModelViewSet):
-    """ViewSet pour les membres du jury."""
+    """Gestion des membres composant les jurys."""
     queryset = JuryMember.objects.all()
     serializer_class = JuryMemberSerializer
-    permission_classes = [IsAdminOrPedagogicalResponsible]
+    permission_classes = [permissions.IsAuthenticated]
 
 
 class DefenseViewSet(viewsets.ModelViewSet):
-    """ViewSet pour la planification des soutenances."""
+    """Planification et gestion des soutenances."""
     queryset = Defense.objects.all()
     serializer_class = DefenseSerializer
-    permission_classes = [IsAdminOrPedagogicalResponsible]
-
-    def _save_defense(self, serializer):
-        try:
-            with transaction.atomic():
-                serializer.save()
-        except IntegrityError as error:
-            cause = error.__cause__
-            constraint_name = getattr(
-                getattr(cause, 'diag', None), 'constraint_name', None
-            )
-            if constraint_name in {
-                'prevent_room_double_booking',
-                'prevent_jury_double_booking',
-            }:
-                raise ValidationError(
-                    {'slot_range': 'The room or jury is already booked during this time.'}
-                ) from error
-            raise
-
-    def perform_create(self, serializer):
-        self._save_defense(serializer)
-
-    def perform_update(self, serializer):
-        self._save_defense(serializer)
+    permission_classes = [permissions.IsAuthenticated]
 
 
 class AssessmentViewSet(viewsets.ModelViewSet):
-    """ViewSet pour l'évaluation et les notes."""
+    """Gestion des évaluations et notes finales."""
     queryset = Assessment.objects.all()
     serializer_class = AssessmentSerializer
-    permission_classes = [IsAdminOrPedagogicalResponsible]
+    permission_classes = [permissions.IsAuthenticated]
 
 
 # ==========================================
-# API DE CONNEXION / AUTHENTIFICATION
+# 2. VUES D'AUTHENTIFICATION ET COMPTES
 # ==========================================
-
-class LoginView(APIView):
-    """Authentifie un compte actif SGSUS et retourne son profil et ses jetons."""
-    authentication_classes = []
-    permission_classes = []
-
-    def post(self, request):
-        identifier = request.data.get('username')
-        password = request.data.get('password')
-
-        if (
-            not isinstance(identifier, str)
-            or not identifier.strip()
-            or not isinstance(password, str)
-            or not password
-        ):
-            return Response(
-                {"error": "Veuillez fournir votre identifiant et votre mot de passe."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        user = authenticate(request, username=identifier.strip(), password=password)
-        if user is None:
-            return Response(
-                {"error": "Identifiant ou mot de passe incorrect."},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-
-        role = get_user_role(user)
-        if role is None:
-            return Response(
-                {"error": "Aucun rôle SGSUS n'est associé à ce compte."},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        refresh = RefreshToken.for_user(user)
-        return Response({
-            "message": "Connexion réussie",
-            "user": _user_profile(user, role),
-            "access": str(refresh.access_token),
-            "refresh": str(refresh),
-        }, status=status.HTTP_200_OK)
-
-
-def _user_profile(user, role=None):
-    """Construit le profil public commun au login et à la route de profil."""
-    role = role or get_user_role(user)
-
-    profile = {
-        'id': user.pk,
-        'username': user.get_username(),
-        'email': user.email,
-        'full_name': ' '.join(
-            part for part in (user.first_name, user.last_name) if part
-        ) or user.get_username(),
-        'role': role,
-    }
-
-    try:
-        student = user.student_account.student
-    except AttributeError:
-        return profile
-
-    # Recherche du dossier lié à la campagne active
-    folder = InternshipFolder.objects.filter(
-        student=student,
-        campaign__is_active=True
-    ).order_by('-created_at').first()
-
-    profile.update({
-        'id': student.pk,
-        'student_number': student.student_number,
-        'full_name': student.full_name,
-        'email': student.email,
-        'folder_id': folder.id if folder else None,
-        'folder_status': folder.status if folder else None,
-    })
-
-    return profile
-
-
-class UserProfileView(APIView):
-    """Retourne uniquement le profil du compte authentifié."""
-
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        """Expose le profil courant sans rendre consultables les comptes tiers."""
-        role = get_user_role(request.user)
-        if role is None:
-            return Response(
-                {'error': 'Aucun rôle SGSUS n’est associé à ce compte.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        return Response({'user': _user_profile(request.user, role)})
-
 
 class LogoutView(APIView):
-    """Révoque le jeton de renouvellement transmis par un compte connecté."""
-
-    permission_classes = [IsAuthenticated]
+    """Invalide le token de rafraîchissement pour déconnecter l'utilisateur."""
+    permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        """Place le jeton de renouvellement en liste noire."""
-        raw_token = request.data.get('refresh')
-        if not isinstance(raw_token, str) or not raw_token:
-            return Response(
-                {'error': 'Le jeton de renouvellement est obligatoire.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         try:
-            refresh = RefreshToken(raw_token)
-            if str(refresh.get('user_id')) != str(request.user.pk):
+            refresh_token = request.data.get("refresh")
+            if not refresh_token:
                 return Response(
-                    {'error': 'Ce jeton n’appartient pas au compte connecté.'},
-                    status=status.HTTP_400_BAD_REQUEST,
+                    {"error": "Le token de rafraîchissement est requis."},
+                    status=status.HTTP_400_BAD_REQUEST
                 )
-            refresh.blacklist()
-        except TokenError:
+            token = RefreshToken(refresh_token)
+            token.blacklist()
             return Response(
-                {'error': 'Le jeton de renouvellement est invalide ou révoqué.'},
-                status=status.HTTP_400_BAD_REQUEST,
+                {"message": "Déconnexion réussie."},
+                status=status.HTTP_205_RESET_CONTENT
             )
-
-        return Response(
-            {'message': 'Déconnexion réussie.'},
-            status=status.HTTP_200_OK,
-        )
-
-
-class UserAccountViewSet(
-    mixins.ListModelMixin,
-    mixins.RetrieveModelMixin,
-    mixins.CreateModelMixin,
-    mixins.UpdateModelMixin,
-    viewsets.GenericViewSet,
-):
-    """Réserve la consultation et la gestion des comptes aux administrateurs."""
-
-    queryset = User.objects.all().order_by('pk')
-    serializer_class = UserAccountSerializer
-    permission_classes = [IsAccountAdministrator]
+        except Exception as e:
+            return Response(
+                {"error": "Jeton invalide ou déjà expiré."},
+                status=status.HTTP_400_BAD_REQUEST
+            )

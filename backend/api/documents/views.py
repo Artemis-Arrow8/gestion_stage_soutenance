@@ -1,109 +1,91 @@
-from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.files.storage import default_storage
-from django.http import FileResponse
-from django.shortcuts import get_object_or_404
-
-from rest_framework.views import APIView
+from django.http import FileResponse, Http404
+from rest_framework import permissions, status
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.views import APIView
 
-from api.models import InternshipFolder, DocumentVersion
+from api.models import DocumentVersion, InternshipFolder
 from api.serializers import DocumentVersionSerializer
-from api.documents.services import upload_document
 from api.roles import get_user_role
 
 
-def get_student_for_user(user):
-    """Récupère la fiche étudiant liée au compte connecté."""
-    account = getattr(user, "student_account", None)
-    return account.student if account else None
-
-
 class DocumentUploadView(APIView):
-    """Permet de déposer un document PDF dans un dossier de stage."""
-
-    permission_classes = [IsAuthenticated]
+    """
+    Permet de déposer ou uploader un document/rapport de stage
+    lié à un dossier de stage spécifique.
+    """
     parser_classes = [MultiPartParser, FormParser]
+    permission_classes = [permissions.IsAuthenticated]
 
-    def post(self, request):
-        folder_id = request.data.get("folder_id")
-        uploaded_file = request.FILES.get("file")
+    def post(self, request, folder_id):
+        user = request.user
+        role = get_user_role(user)
 
-        if not folder_id or not uploaded_file:
-            return Response(
-                {"error": "Le dossier et le fichier PDF sont obligatoires."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
+        # Vérification de l'existence du dossier de stage
         try:
-            folder_id = int(folder_id)
-        except (ValueError, TypeError):
+            folder = InternshipFolder.objects.get(pk=folder_id)
+        except InternshipFolder.DoesNotExist:
             return Response(
-                {"error": "Identifiant du dossier invalide."},
-                status=status.HTTP_400_BAD_REQUEST,
+                {"error": "Le dossier de stage est introuvable."},
+                status=status.HTTP_404_NOT_FOUND
             )
 
-        folder = get_object_or_404(InternshipFolder, pk=folder_id)
-
-        role = get_user_role(request.user)
-        student = get_student_for_user(request.user)
-
-        if role not in ("admin", "responsible"):
-            if student is None or folder.student_id != student.id:
-                raise PermissionDenied(
-                    "Vous ne pouvez déposer un document que dans votre propre dossier."
+        # Vérification des droits (étudiant propriétaire ou encadreur/admin)
+        if role == 'student':
+            try:
+                if folder.student.student_account.user != user:
+                    return Response(
+                        {"error": "Vous n'êtes pas autorisé à modifier ce dossier."},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except AttributeError:
+                return Response(
+                    {"error": "Compte étudiant non lié."},
+                    status=status.HTTP_400_BAD_REQUEST
                 )
 
-        try:
-            document = upload_document(folder.id, uploaded_file)
-        except DjangoValidationError as error:
-            raise ValidationError(error.messages) from error
+        # Récupération du fichier envoyé
+        file_obj = request.FILES.get('file')
+        if not file_obj:
+            return Response(
+                {"error": "Aucun fichier fourni."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        return Response(
-            {
-                "message": "Document déposé avec succès.",
-                "document": DocumentVersionSerializer(document).data,
-            },
-            status=status.HTTP_201_CREATED,
+        # Détermination du numéro de version suivant
+        derniere_version = DocumentVersion.objects.filter(folder=folder).order_by('-version_number').first()
+        prochain_num = (derniere_version.version_number + 1) if derniere_version else 1
+
+        # Enregistrement du fichier via le stockage par défaut
+        file_path = default_storage.save(f"documents/folder_{folder.pk}/{file_obj.name}", file_obj)
+
+        # Création de l'enregistrement en base
+        document_version = DocumentVersion.objects.create(
+            folder=folder,
+            version_number=prochain_num,
+            file_path=file_path
         )
+
+        serializer = DocumentVersionSerializer(document_version)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class DocumentDownloadView(APIView):
-    """Permet de télécharger un document en respectant les droits d'accès."""
-
-    permission_classes = [IsAuthenticated]
+    """Permet de télécharger ou consulter un document versionné."""
+    permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, document_id):
-        document = get_object_or_404(
-            DocumentVersion.objects.select_related("folder", "folder__student"),
-            pk=document_id,
-        )
-
-        role = get_user_role(request.user)
-        student = get_student_for_user(request.user)
-
-        if role not in ("admin", "responsible"):
-            if student is None or document.folder.student_id != student.id:
-                raise PermissionDenied(
-                    "Vous ne pouvez pas télécharger ce document."
-                )
-
         try:
-            file = default_storage.open(document.file_path, "rb")
-        except (FileNotFoundError, OSError):
+            doc = DocumentVersion.objects.get(pk=document_id)
+        except DocumentVersion.DoesNotExist:
+            raise Http404("Le document demandé est introuvable.")
+
+        if not default_storage.exists(doc.file_path):
             return Response(
-                {"error": "Le fichier demandé est introuvable."},
-                status=status.HTTP_404_NOT_FOUND,
+                {"error": "Le fichier physique est introuvable sur le serveur."},
+                status=status.HTTP_404_NOT_FOUND
             )
 
-        filename = f"document_{document.id}_v{document.version_number}.pdf"
-
-        return FileResponse(
-            file,
-            as_attachment=True,
-            filename=filename,
-            content_type="application/pdf",
-        )
+        file_handle = default_storage.open(doc.file_path, 'rb')
+        return FileResponse(file_handle, as_attachment=True, filename=doc.file_path.split('/')[-1])

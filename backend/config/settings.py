@@ -49,10 +49,9 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'corsheaders',
     'rest_framework',  
-    'rest_framework_simplejwt.token_blacklist',
     'api',
+    
 ]
 
 MIDDLEWARE = [
@@ -95,11 +94,26 @@ WSGI_APPLICATION = 'config.wsgi.application'
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv("POSTGRES_DB", "gestion_stage_soutenance"),
-        "USER": os.getenv("POSTGRES_USER", "postgres"),
-        "PASSWORD": os.getenv("POSTGRES_PASSWORD", ""),
-        "HOST": os.getenv("DB_HOST", "localhost"),
-        "PORT": os.getenv("DB_PORT", "5432"),
+        "NAME": os.getenv(
+            "POSTGRES_DB",
+            "gestion_stage_soutenance"
+        ),
+        "USER": os.getenv(
+            "POSTGRES_USER",
+            "gestion_user"
+        ),
+        "PASSWORD": os.getenv(
+            "POSTGRES_PASSWORD",
+            ""
+        ),
+        "HOST": os.getenv(
+            "DB_HOST",
+            "localhost"
+        ),
+        "PORT": os.getenv(
+            "DB_PORT",
+            "5432"
+        ),
     }
 }
 
@@ -134,6 +148,11 @@ USE_I18N = True
 USE_TZ = True
 
 
+# Tests
+# Exécuteur personnalisé : charge database/schema.sql dans la base de test
+# (les modèles sont managed=False, Django ne crée donc pas les tables lui-même).
+TEST_RUNNER = 'config.test_runner.SchemaTestRunner'
+
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
@@ -148,27 +167,3 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
-
-REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
-    ],
-}
-
-SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=5),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
-    'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': True,
-}
-# ==========================================
-# CONFIGURATION DU STOCKAGE DES DOCUMENTS
-# ==========================================
-
-MEDIA_URL = "/media/"
-
-MEDIA_ROOT = BASE_DIR / "media"
-
-FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
-
-DATA_UPLOAD_MAX_MEMORY_SIZE = 12 * 1024 * 1024

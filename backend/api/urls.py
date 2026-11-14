@@ -1,32 +1,33 @@
-from django.urls import path, include
+from django.urls import include, path
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import TokenRefreshView
-from .documents.views import DocumentUploadView, DocumentDownloadView
+
 from .views import (
-    CampaignViewSet, StudentViewSet, InternshipFolderViewSet,
-    DocumentVersionViewSet, ReviewViewSet, JuryViewSet,
-    JuryMemberViewSet, DefenseViewSet, AssessmentViewSet, LoginView,
-    LogoutView, UserAccountViewSet, UserProfileView,
+    AssessmentViewSet,
+    CampaignViewSet,
+    DefenseViewSet,
+    DocumentVersionViewSet,
+    InternshipFolderViewSet,
+    JuryMemberViewSet,
+    JuryViewSet,
+    ReviewViewSet,
+    SalleViewSet,
+    StudentViewSet,
 )
 
+# Routeur principal DRF pour les ViewSets
 router = DefaultRouter()
-router.register(r'accounts', UserAccountViewSet, basename='account')
-router.register(r'campaigns', CampaignViewSet)
-router.register(r'students', StudentViewSet)
-router.register(r'internship-folders', InternshipFolderViewSet)
-router.register(r'document-versions', DocumentVersionViewSet)
-router.register(r'reviews', ReviewViewSet)
-router.register(r'juries', JuryViewSet)
-router.register(r'jury-members', JuryMemberViewSet)
-router.register(r'defenses', DefenseViewSet)
-router.register(r'assessments', AssessmentViewSet)
+router.register(r'campaigns', CampaignViewSet, basename='campaign')
+router.register(r'students', StudentViewSet, basename='student')
+router.register(r'internship-folders', InternshipFolderViewSet, basename='internship-folder')
+router.register(r'document-versions', DocumentVersionViewSet, basename='document-version')
+router.register(r'reviews', ReviewViewSet, basename='review')
+router.register(r'rooms', SalleViewSet, basename='room')
+router.register(r'jurys', JuryViewSet, basename='jury')
+router.register(r'jury-members', JuryMemberViewSet, basename='jury-member')
+router.register(r'defenses', DefenseViewSet, basename='defense')
+router.register(r'assessments', AssessmentViewSet, basename='assessment')
 
 urlpatterns = [
+    # Inclusion de toutes les routes du routeur DRF
     path('', include(router.urls)),
-    path('login/', LoginView.as_view(), name='api-login'),
-    path('logout/', LogoutView.as_view(), name='api-logout'),
-    path('profile/', UserProfileView.as_view(), name='api-profile'),
-    path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
-    path('documents/upload/', DocumentUploadView.as_view(), name='document-upload'),
-    path('documents/download/<int:document_id>/', DocumentDownloadView.as_view(), name='document-download'),
 ]

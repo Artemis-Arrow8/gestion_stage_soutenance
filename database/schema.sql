@@ -3,6 +3,7 @@
 -- Utiliser `python manage.py migrate` après avoir sauvegardé toute base existante.
 
 -- Suppression préalable pour les tests (ordre inverse des dépendances)
+DROP TABLE IF EXISTS room CASCADE;
 DROP TABLE IF EXISTS assessment CASCADE;
 DROP TABLE IF EXISTS resource_booking CASCADE;
 DROP TABLE IF EXISTS defense CASCADE;
@@ -28,6 +29,21 @@ CREATE TABLE student (
     student_number VARCHAR(100) UNIQUE NOT NULL,
     full_name VARCHAR(255) NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL
+);
+-- ==========================================
+-- Liaison entre compte utilisateur et étudiant
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS student_account (
+    id SERIAL PRIMARY KEY,
+
+    user_id INTEGER NOT NULL UNIQUE
+        REFERENCES auth_user(id)
+        ON DELETE CASCADE,
+
+    student_id INTEGER NOT NULL UNIQUE
+        REFERENCES student(id)
+        ON DELETE CASCADE
 );
 
 -- 3. Table Dossier de Stage
@@ -109,3 +125,25 @@ EXCLUDE USING gist (room_name WITH =, slot_range WITH &&);
 ALTER TABLE defense
 ADD CONSTRAINT prevent_jury_double_booking 
 EXCLUDE USING gist (jury_id WITH =, slot_range WITH &&);
+
+-- =============================================================
+-- 10. Table Salle — AJOUT TÂCHE 4 (module planification)
+--     Catalogue des salles de soutenance. La table `defense` reste
+--     liée à la salle via `room_name` (identifiant textuel), ce qui
+--     préserve les contraintes EXG01 existantes ; le serveur Django
+--     vérifie que la salle existe et est active avant planification.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS room (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) UNIQUE NOT NULL,
+    capacity INT NOT NULL CHECK (capacity > 0),
+    is_active BOOLEAN DEFAULT TRUE
+);
+
+-- Salles de démonstration (ignorées si elles existent déjà)
+INSERT INTO room (name, capacity, is_active) VALUES
+    ('Amphithéâtre A', 120, TRUE),
+    ('Salle 101', 30, TRUE),
+    ('Salle 102', 30, TRUE),
+    ('Salle 103', 25, TRUE)
+ON CONFLICT (name) DO NOTHING;

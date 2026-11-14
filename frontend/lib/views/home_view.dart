@@ -1,437 +1,147 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:gestion_stage_soutenance/providers/auth_provider.dart';
 
-import '../providers/auth_provider.dart';
-import 'documents_view.dart';
-import 'document_upload_view.dart';
-
+/// Vue principale du tableau de bord (HomeView).
+/// Adapte dynamiquement l'affichage en fonction du rôle de l'utilisateur connecté
+/// (admin, student, supervisor, responsible).
 class HomeView extends StatelessWidget {
-  const HomeView({super.key});
+  const HomeView({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = context.watch<AuthProvider>();
+    final authProvider = Provider.of<AuthProvider>(context);
     final user = authProvider.user;
-    final dashboard = _dashboardForRole(authProvider.role);
 
-    if (user == null || dashboard == null) {
-      return const Scaffold(
+    // Vérification de la session utilisateur
+    if (user == null) {
+      return Scaffold(
         body: Center(
           child: Text(
-            'Cette session ne donne accès à aucun espace SGSUS.',
+            "Aucune session active. Veuillez vous connecter.",
+            style: TextStyle(fontSize: 16, color: Colors.grey[700]),
           ),
         ),
       );
     }
 
-    const gold = Color(0xFFD4AF37);
-    const card = Color(0xFF1E1E1E);
+    final role = authProvider.role ?? 'student';
 
     return Scaffold(
-      backgroundColor: Colors.black,
       appBar: AppBar(
-        title: Text(
-          dashboard.title,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 18,
-          ),
-        ),
-        backgroundColor: card,
-        iconTheme: const IconThemeData(color: Colors.white),
+        title: const Text('Tableau de bord - SGSUS'),
         actions: [
           IconButton(
-            icon: const Icon(
-              Icons.logout_rounded,
-              color: gold,
-            ),
+            icon: const Icon(Icons.logout),
             tooltip: 'Se déconnecter',
-            onPressed: () => authProvider.logout(),
+            onPressed: () async {
+              await authProvider.logout();
+            },
           ),
         ],
       ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const CircleAvatar(
-                    radius: 30,
-                    backgroundColor: gold,
-                    child: Icon(
-                      Icons.person,
-                      size: 35,
-                      color: Colors.black,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Bienvenue,',
-                          style: TextStyle(
-                            color: Colors.white70,
-                          ),
-                        ),
-                        Text(
-                          user['full_name']?.toString() ??
-                              'Compte SGSUS',
-                          style: const TextStyle(
-                            color: gold,
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 32),
-
-              _buildProfileCard(user, dashboard),
-
-              const SizedBox(height: 25),
-
-              const Text(
-                'MES MODULES',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 17,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-
-              const SizedBox(height: 16),
-
-              Expanded(
-                child: GridView.builder(
-                  itemCount: dashboard.actions.length,
-                  gridDelegate:
-                      const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
-                    childAspectRatio: 1.15,
-                  ),
-                  itemBuilder: (context, index) {
-                    final action = dashboard.actions[index];
-
-                    return _buildActionCard(
-                      context,
-                      action,
-                      authProvider,
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
- // Configuration des espaces selon le rôle.
-_RoleDashboard? _dashboardForRole(String? role) {
-  return switch (role) {
-    'admin' => const _RoleDashboard(
-        title: 'Tableau de bord — Administration',
-        roleName: 'Administrateur',
-        accountLabel: 'Compte :',
-        actions: [
-          _DashboardAction(
-            Icons.manage_accounts,
-            'Gestion des comptes',
-          ),
-          _DashboardAction(
-            Icons.school,
-            'Gestion des étudiants',
-          ),
-          _DashboardAction(
-            Icons.folder,
-            'Gestion des dossiers',
-          ),
-        ],
-      ),
-    'responsible' => const _RoleDashboard(
-        title: 'Tableau de bord — Pédagogie',
-        roleName: 'Responsable pédagogique',
-        accountLabel: 'Compte :',
-        actions: [
-          _DashboardAction(
-            Icons.campaign,
-            'Campagnes',
-          ),
-          _DashboardAction(
-            Icons.event_note,
-            'Planification',
-          ),
-          _DashboardAction(
-            Icons.folder_open,
-            'Suivi des dossiers',
-          ),
-        ],
-      ),
-    'supervisor' => const _RoleDashboard(
-        title: 'Tableau de bord — Encadrement',
-        roleName: 'Encadreur',
-        accountLabel: 'Compte :',
-        actions: [
-          _DashboardAction(
-            Icons.rate_review,
-            'Avis d’encadrement',
-          ),
-          _DashboardAction(
-            Icons.fact_check,
-            'Suivi des avis',
-          ),
-        ],
-      ),
-    'student' => const _RoleDashboard(
-        title: 'Tableau de bord — Étudiant',
-        roleName: 'Étudiant',
-        accountLabel: 'Numéro étudiant :',
-        actions: [
-          _DashboardAction(
-            Icons.folder_open,
-            'Mon dossier de stage',
-          ),
-          _DashboardAction(
-            Icons.upload_file,
-            'Déposer un document',
-          ),
-          _DashboardAction(
-            Icons.description,
-            'Mes documents',
-          ),
-          _DashboardAction(
-            Icons.timeline,
-            'Suivi de mon dossier',
-          ),
-          _DashboardAction(
-            Icons.event_note,
-            'Ma soutenance',
-          ),
-        ],
-      ),
-    _ => null,
-  };
-}
-
-  // Affichage des informations du compte.
-  Widget _buildProfileCard(
-    Map<String, dynamic> user,
-    _RoleDashboard dashboard,
-  ) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E1E),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: const Color(0xFFD4AF37).withValues(alpha: 0.3),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Profil du compte',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-            ),
-          ),
-
-          const Divider(
-            color: Colors.white24,
-            height: 24,
-          ),
-
-          _buildInfoRow(
-            dashboard.accountLabel,
-            user['student_number']?.toString() ??
-                user['username']?.toString() ??
-                'N/A',
-          ),
-
-          const SizedBox(height: 12),
-
-          _buildInfoRow(
-            'Email :',
-            user['email']?.toString() ?? 'N/A',
-          ),
-
-          const SizedBox(height: 12),
-
-          _buildInfoRow(
-            'Rôle :',
-            dashboard.roleName,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoRow(String label, String value) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            color: Colors.white60,
-          ),
-        ),
-        Flexible(
-          child: Text(
-            value,
-            textAlign: TextAlign.end,
-            style: const TextStyle(
-              color: Colors.white,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // Gestion des clics sur les modules.
-  Widget _buildActionCard(
-    BuildContext context,
-    _DashboardAction action,
-    AuthProvider authProvider,
-  ) {
-    final isDocumentModule =
-        action.title == 'Mes documents' ||
-        action.title == 'Déposer un document';
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-
-      onTap: () {
-        if (isDocumentModule) {
-          final folderId = authProvider.folderId;
-          final token = authProvider.accessToken;
-
-          // Vérification de la session et du dossier.
-          if (folderId == null || token == null) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'Le dossier de stage ou le jeton '
-                  'de connexion est indisponible.',
-                ),
-              ),
-            );
-            return;
-          }
-
-          // Choix de l'écran selon le module.
-          final Widget page;
-
-          if (action.title == 'Déposer un document') {
-            page = DocumentUploadView(
-              folderId: folderId,
-              accessToken: token,
-            );
-          } else {
-            page = DocumentsView(
-              folderId: folderId,
-              accessToken: token,
-            );
-          }
-
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => page,
-            ),
-          );
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '${action.title} sera intégré prochainement.',
-              ),
-            ),
-          );
-        }
-      },
-
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1E1E1E),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: Colors.white10,
-          ),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: ListView(
           children: [
-            Icon(
-              action.icon,
-              size: 38,
-              color: const Color(0xFFD4AF37),
-            ),
-
-            const SizedBox(height: 12),
-
-            Text(
-              action.title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-
-            const SizedBox(height: 6),
-
+            // En-tête de profil utilisateur
+            _buildProfileCard(user),
+            const SizedBox(height: 24),
             const Text(
-              'Accéder au module',
+              "MES MODULES & ACTIONS",
               style: TextStyle(
-                color: Colors.white54,
-                fontSize: 11,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
               ),
             ),
+            const SizedBox(height: 12),
+            // Contenu dynamique selon le rôle
+            _buildDashboardByRole(role, context),
           ],
         ),
       ),
     );
   }
-}
 
-// Modèle du tableau de bord.
-class _RoleDashboard {
-  const _RoleDashboard({
-    required this.title,
-    required this.roleName,
-    required this.accountLabel,
-    required this.actions,
-  });
+  /// Carte affichant les informations sommaires de l'utilisateur connecté
+  Widget _buildProfileCard(Map<String, dynamic> user) {
+    return Container(
+      padding: const EdgeInsets.all(16.0),
+      decoration: BoxDecoration(
+        color: Colors.blueGrey[50],
+        borderRadius: BorderRadius.circular(12.0),
+        border: Border.all(color: Colors.blueGrey[200]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            user['full_name'] ?? user['username'] ?? 'Utilisateur',
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            "Email : ${user['email'] ?? 'Non renseigné'}",
+            style: TextStyle(color: Colors.grey[700]),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            "Rôle : ${user['role'] ?? 'Non défini'}",
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+              color: Colors.blueAccent,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-  final String title;
-  final String roleName;
-  final String accountLabel;
-  final List<_DashboardAction> actions;
-}
+  /// Sélectionne et affiche les actions et tableaux de bord spécifiques au rôle
+  Widget _buildDashboardByRole(String role, BuildContext context) {
+    switch (role) {
+      case 'admin':
+        return Column(
+          children: [
+            _buildActionCard(
+              title: "Gestion des Campagnes",
+              subtitle: "Configurer les années académiques et sessions",
+              icon: Icons.calendar_today,
+              onTap: () {},
+            ),
+            _buildActionCard(
+              title: "Gestion des Utilisateurs & Rôles",
+              subtitle: "Administrer les comptes et attributions",
+              icon: Icons.people,
+              onTap: () {},
+            ),
+          ],
+        );
 
-// Modèle des actions.
-class _DashboardAction {
-  const _DashboardAction(this.icon, this.title);
+      case 'supervisor':
+      case 'responsible':
+        return Column(
+          children: [
+            _buildActionCard(
+              title: "Validation des Dossiers de Stage",
+              subtitle: "Consulter et évaluer les propositions de stage",
+              icon: Icons.folder_shared,
+              onTap: () {},
+            ),
+            _buildActionCard(
+              title: "Planification des Soutenances",
+              subtitle: "Affecter les salles et constituer les jurys",
+              icon: Icons.event_available,
+              onTap: () {},
+            ),
+          ],
+        );
 
-  final IconData icon;
-  final String title;
-}
+      case 'student':
+      default:
+        return Column(
+          children: [
+            _buildActionCard

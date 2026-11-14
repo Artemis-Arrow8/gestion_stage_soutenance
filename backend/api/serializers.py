@@ -7,6 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
+
 from .models import (
     Assessment,
     Campaign,
@@ -16,19 +17,24 @@ from .models import (
     Jury,
     JuryMember,
     Review,
+    Room,
     Student,
     StudentAccount,
 )
 from .roles import ROLE_GROUPS, get_user_role
-
+from .services import conflicts
 
 User = get_user_model()
 
 
+# ==========================================
+# 1. CHAMPS PERSONNALISÉS
+# ==========================================
 class DateTimeRangeSerializerField(serializers.Field):
+    """Sérialise un intervalle PostgreSQL (tstzrange) en objet {start, end}."""
     default_error_messages = {
-        'invalid': 'Provide a start and end datetime with timezone offsets.',
-        'order': 'The end datetime must be later than the start datetime.',
+        'invalid': 'Fournissez une date de début et de fin avec fuseau horaire.',
+        'order': 'La date de fin doit être postérieure à la date de début.',
     }
 
     def to_internal_value(self, data):
@@ -43,9 +49,7 @@ class DateTimeRangeSerializerField(serializers.Field):
             except ValueError:
                 parsed = None
             if not isinstance(parsed, datetime) or timezone.is_naive(parsed):
-                raise serializers.ValidationError(
-                    {key: self.error_messages['invalid']}
-                )
+                raise serializers.ValidationError({key: self.error_messages['invalid']})
             datetimes.append(parsed)
 
         start, end = datetimes
@@ -66,88 +70,31 @@ class DateTimeRangeSerializerField(serializers.Field):
         }
 
 
-class CampaignSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Campaign
-        fields = '__all__'
-
-class StudentSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Student
-        fields = '__all__'
-
-class InternshipFolderSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = InternshipFolder
-        fields = '__all__'
-
-class DocumentVersionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = DocumentVersion
-        fields = '__all__'
-
-class ReviewSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Review
-        fields = '__all__'
-        read_only_fields = ('author',)
-
-class JurySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Jury
-        fields = '__all__'
-
-class JuryMemberSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = JuryMember
-        fields = '__all__'
-
-class DefenseSerializer(serializers.ModelSerializer):
-    slot_range = DateTimeRangeSerializerField()
-
-    class Meta:
-        model = Defense
-        fields = '__all__'
-
-    def validate(self, attrs):
-        defense = self.instance
-        slot_range = attrs.get('slot_range', defense.slot_range if defense else None)
-        room_name = attrs.get('room_name', defense.room_name if defense else None)
-        jury = attrs.get('jury', defense.jury if defense else None)
-
-        if slot_range is None:
-            return attrs
-
-        conflicts = Defense.objects.filter(slot_range__overlap=slot_range)
-        if defense:
-            conflicts = conflicts.exclude(pk=defense.pk)
-
-        errors = {}
-        if room_name and conflicts.filter(room_name=room_name).exists():
-            errors['room_name'] = 'This room is already booked during this time.'
-        if jury and conflicts.filter(jury=jury).exists():
-            errors['jury'] = 'This jury is already booked during this time.'
-        if errors:
-            raise serializers.ValidationError(errors)
-        return attrs
-
-
-class AssessmentSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Assessment
-        fields = '__all__'
-
-
 class AccountRoleField(serializers.ChoiceField):
-    """Lit le rôle calculé tout en acceptant sa valeur à l’écriture."""
-
+    """Lit le rôle calculé d'un utilisateur et permet son attribution à l'écriture."""
     def get_attribute(self, instance):
         return get_user_role(instance)
 
 
-class UserAccountSerializer(serializers.ModelSerializer):
-    """Crée et met à jour les comptes sans jamais exposer leur mot de passe."""
+# ==========================================
+# 2. CAMPAGNE, ÉTUDIANTS ET COMPTES
+# ==========================================
+class CampaignSerializer(serializers.ModelSerializer):
+    """Campagnes académiques."""
+    class Meta:
+        model = Campaign
+        fields = '__all__'
 
+
+class StudentSerializer(serializers.ModelSerializer):
+    """Fiches étudiants."""
+    class Meta:
+        model = Student
+        fields = '__all__'
+
+
+class UserAccountSerializer(serializers.ModelSerializer):
+    """Gestion complète des comptes utilisateurs, de leurs rôles et profils étudiants."""
     role = AccountRoleField(choices=ROLE_GROUPS, required=False)
     password = serializers.CharField(
         write_only=True,
@@ -181,15 +128,13 @@ class UserAccountSerializer(serializers.ModelSerializer):
         read_only_fields = ('id', 'student_profile')
 
     def validate(self, attrs):
-        """Vérifie la cohérence du rôle, du mot de passe et du profil lié."""
         instance = self.instance
         role = attrs.get('role', get_user_role(instance) if instance else None)
         student = attrs.get('student')
 
         if instance is None and role is None:
-            raise serializers.ValidationError(
-                {'role': 'Le rôle du nouveau compte est obligatoire.'}
-            )
+            raise serializers.ValidationError({'role': 'Le rôle du nouveau compte est obligatoire.'})
+
         if role == 'student':
             if student is None and instance is not None:
                 try:
@@ -237,18 +182,13 @@ class UserAccountSerializer(serializers.ModelSerializer):
             try:
                 password_validation.validate_password(password, user=candidate)
             except DjangoValidationError as error:
-                raise serializers.ValidationError(
-                    {'password': error.messages}
-                ) from error
+                raise serializers.ValidationError({'password': error.messages}) from error
         elif instance is None:
-            raise serializers.ValidationError(
-                {'password': 'Le mot de passe du nouveau compte est obligatoire.'}
-            )
+            raise serializers.ValidationError({'password': 'Le mot de passe du nouveau compte est obligatoire.'})
 
         return attrs
 
     def get_student_profile(self, user):
-        """Retourne les données minimales du profil étudiant associé."""
         try:
             student = user.student_account.student
         except AttributeError:
@@ -262,7 +202,6 @@ class UserAccountSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
-        """Crée le compte, son rôle et, si nécessaire, son lien étudiant."""
         role = validated_data.pop('role')
         student = validated_data.pop('student', None)
         password = validated_data.pop('password')
@@ -274,7 +213,6 @@ class UserAccountSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def update(self, instance, validated_data):
-        """Met à jour les champs autorisés et synchronise rôle et profil."""
         role = validated_data.pop('role', get_user_role(instance))
         student = validated_data.pop('student', None)
         password = validated_data.pop('password', None)
@@ -283,10 +221,7 @@ class UserAccountSerializer(serializers.ModelSerializer):
             setattr(instance, field, value)
         if password:
             instance.set_password(password)
-        if role == 'admin':
-            instance.is_staff = True
-        else:
-            instance.is_staff = False
+        instance.is_staff = (role == 'admin')
         instance.save()
 
         if role == 'student':
@@ -301,8 +236,164 @@ class UserAccountSerializer(serializers.ModelSerializer):
 
     @staticmethod
     def _assign_role(user, role):
-        """Remplace les groupes de rôle connus par le rôle demandé."""
         groups = Group.objects.filter(name__in=ROLE_GROUPS)
         user.groups.remove(*groups)
         group, _ = Group.objects.get_or_create(name=role)
         user.groups.add(group)
+
+
+# ==========================================
+# 3. DOSSIERS DE STAGE ET DOCUMENTS
+# ==========================================
+class InternshipFolderSerializer(serializers.ModelSerializer):
+    """Dossiers de stage."""
+    class Meta:
+        model = InternshipFolder
+        fields = '__all__'
+
+
+class DocumentVersionSerializer(serializers.ModelSerializer):
+    """Versions de rapports déposés."""
+    class Meta:
+        model = DocumentVersion
+        fields = '__all__'
+        read_only_fields = ('id', 'uploaded_at')
+
+
+class ReviewSerializer(serializers.ModelSerializer):
+    """Avis et validations de l'encadreur ou du tuteur."""
+    class Meta:
+        model = Review
+        fields = '__all__'
+        read_only_fields = ('id', 'author', 'created_at')
+
+
+# ==========================================
+# 4. SALLES, JURYS ET PLANIFICATION
+# ==========================================
+class SalleSerializer(serializers.ModelSerializer):
+    """Catalogue des salles de soutenance."""
+    class Meta:
+        model = Room
+        fields = ['id', 'name', 'capacity', 'is_active']
+
+    def validate_name(self, value):
+        return value.strip()
+
+    def validate_capacity(self, value):
+        if value is None or value <= 0:
+            raise serializers.ValidationError("La capacité de la salle doit être strictement positive.")
+        return value
+
+
+class JuryMemberSerializer(serializers.ModelSerializer):
+    """Membres composant un jury."""
+    ROLES_VALIDES = {'president', 'rapporteur', 'examinateur'}
+
+    class Meta:
+        model = JuryMember
+        fields = ['id', 'jury', 'member_name', 'role_in_jury']
+
+    def validate_member_name(self, value):
+        return value.strip()
+
+    def validate_role_in_jury(self, value):
+        role = value.strip().lower()
+        if role not in self.ROLES_VALIDES:
+            raise serializers.ValidationError(
+                "Rôle invalide : choisir parmi 'president', 'rapporteur', 'examinateur'."
+            )
+        return role
+
+
+class JurySerializer(serializers.ModelSerializer):
+    """Jury de soutenance avec ses membres."""
+    members = JuryMemberSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Jury
+        fields = ['id', 'name', 'is_complete', 'members']
+
+    def validate_name(self, value):
+        return value.strip()
+
+
+class DefenseSerializer(serializers.ModelSerializer):
+    """Planification des soutenances avec gestion des créneaux et contrôle des conflits."""
+    slot_start = serializers.DateTimeField(write_only=True)
+    slot_end = serializers.DateTimeField(write_only=True)
+    folder_detail = InternshipFolderSerializer(source='folder', read_only=True)
+    jury_detail = JurySerializer(source='jury', read_only=True)
+
+    class Meta:
+        model = Defense
+        fields = [
+            'id',
+            'folder',
+            'folder_detail',
+            'jury',
+            'jury_detail',
+            'room_name',
+            'slot_start',
+            'slot_end',
+            'status',
+        ]
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        instance = self.instance
+
+        debut = attrs.get('slot_start') or (instance.slot_range.lower if instance else None)
+        fin = attrs.get('slot_end') or (instance.slot_range.upper if instance else None)
+        dossier = attrs.get('folder') or (instance.folder if instance else None)
+        jury = attrs.get('jury') or (instance.jury if instance else None)
+        room_name = (attrs.get('room_name') or (instance.room_name if instance else '') or '').strip()
+
+        slot = conflicts.construire_creneau(debut, fin)
+
+        if not room_name:
+            raise serializers.ValidationError({'room_name': 'La salle est obligatoire.'})
+        attrs['room_name'] = room_name
+        if dossier is None:
+            raise serializers.ValidationError({'folder': 'Le dossier de stage est obligatoire.'})
+        if jury is None:
+            raise serializers.ValidationError({'jury': 'Le jury est obligatoire pour planifier une soutenance.'})
+
+        defense_exclue_id = instance.pk if instance else None
+        conflicts.verifier_toutes_regles(
+            dossier.pk, jury.pk, room_name, slot,
+            defense_exclue_id=defense_exclue_id,
+        )
+
+        attrs.pop('slot_start', None)
+        attrs.pop('slot_end', None)
+        attrs['slot_range'] = slot
+        return attrs
+
+    def create(self, validated_data):
+        slot_range = validated_data.pop('slot_range')
+        return Defense.objects.create(slot_range=slot_range, **validated_data)
+
+    def update(self, instance, validated_data):
+        slot_range = validated_data.pop('slot_range', None)
+        if slot_range is not None:
+            instance.slot_range = slot_range
+        return super().update(instance, validated_data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        slot = instance.slot_range
+        if slot is not None:
+            data['slot_start'] = slot.lower.isoformat() if slot.lower else None
+            data['slot_end'] = slot.upper.isoformat() if slot.upper else None
+        return data
+
+
+# ==========================================
+# 5. ÉVALUATIONS ET NOTES
+# ==========================================
+class AssessmentSerializer(serializers.ModelSerializer):
+    """Notes et validation finale de la soutenance."""
+    class Meta:
+        model = Assessment
+        fields = '__all__'

@@ -1,294 +1,125 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-import '../repositories/auth_repository.dart';
-import '../services/api_service.dart';
-import '../services/auth_storage.dart';
-
-/// Pilote les états d’authentification et restaure les sessions persistées.
 class AuthProvider extends ChangeNotifier {
-  AuthProvider({AuthRepository? authRepository, AuthStorage? storage})
-    : _authRepository = authRepository ?? AuthRepository(),
-      _storage = storage ?? SecureAuthStorage();
+  final _storage = const FlutterSecureStorage();
 
-  static const Set<String> _roles = {
-    'admin',
-    'student',
-    'supervisor',
-    'responsible',
-  };
-
-  final AuthRepository _authRepository;
-  final AuthStorage _storage;
-
-  bool _isLoading = false;
-  bool _isInitializing = true;
-  bool _isDisposed = false;
-
-  Map<String, dynamic>? _user;
   String? _accessToken;
   String? _refreshToken;
+  Map<String, dynamic>? _user;
+  bool _isLoading = false;
   String? _errorMessage;
-  Future<void>? _restoreOperation;
 
-  bool get isLoading => _isLoading;
-  bool get isInitializing => _isInitializing;
-
-  /// Profil de l'utilisateur connecté.
-  Map<String, dynamic>? get user => _user;
-
-  /// Jeton d'accès à transmettre aux routes protégées.
+  // Getters d'état
   String? get accessToken => _accessToken;
-
-  /// Jeton de renouvellement.
   String? get refreshToken => _refreshToken;
-
-  /// Rôle de l'utilisateur connecté.
-  String? get role => _user?['role'] as String?;
-
-  /// Identifiant du dossier de stage de l'étudiant connecté.
-  int? get folderId {
-    final value = _user?['folder_id'];
-
-    if (value is int) return value;
-    if (value is String) return int.tryParse(value);
-
-    return null;
-  }
-
-  /// Statut du dossier de stage.
-  String? get folderStatus => _user?['folder_status'] as String?;
-
+  Map<String, dynamic>? get user => _user;
+  bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+  bool get isAuthenticated => _accessToken != null;
 
-  bool get isAuthenticated => _user != null;
+  // Rôle de l'utilisateur connecté (admin, student, supervisor, responsible)
+  String? get role => _user?['role'] ?? _user?['group'];
 
-  /// Vérifie les jetons persistés et restaure la session.
-  Future<void> restoreSession() {
-    return _restoreOperation ??= _restoreSession();
-  }
-
-  Future<void> _restoreSession() async {
-    _isInitializing = true;
-    _notifyListeners();
-
-    try {
-      final accessToken = await _storage.readAccessToken();
-      final refreshToken = await _storage.readRefreshToken();
-
-      if (accessToken == null || refreshToken == null) {
-        await _storage.clearTokens();
-        return;
-      }
-
-      _accessToken = accessToken;
-      _refreshToken = refreshToken;
-
-      try {
-        await _loadProfile(accessToken);
-      } on ApiException catch (error) {
-        if (error.statusCode == 403) {
-          await _clearSession();
-          return;
-        }
-
-        if (error.statusCode != 401) {
-          _errorMessage = error.message;
-          return;
-        }
-
-        await _refreshAndLoadProfile(refreshToken);
-      }
-    } on ApiException catch (error) {
-      if (error.statusCode == 401 || error.statusCode == 403) {
-        await _clearSession();
-      } else {
-        _errorMessage = error.message;
-      }
-    } on FormatException catch (error) {
-      _errorMessage = error.message;
-      await _clearSession();
-    } on Exception catch (error) {
-      _errorMessage = 'Impossible de restaurer la session : $error';
-    } finally {
-      _isInitializing = false;
-      _notifyListeners();
-    }
-  }
-
-  /// Connecte l'utilisateur avec les identifiants fournis.
-  Future<bool> login(String username, String password) async {
+  /// Restaure la session depuis le stockage sécurisé au lancement de l'application
+  Future<void> restoreSession() async {
     _isLoading = true;
-    _errorMessage = null;
-    _notifyListeners();
+    notifyListeners();
 
     try {
-      final response = await _authRepository.login(username, password);
+      _accessToken = await _storage.read(key: 'access_token');
+      _refreshToken = await _storage.read(key: 'refresh_token');
 
-      final user = _validatedUser(response['user']);
-      final accessToken = _requiredToken(response['access'], 'accès');
-      final refreshToken = _requiredToken(
-        response['refresh'],
-        'renouvellement',
-      );
-
-      await _storage.saveTokens(accessToken, refreshToken);
-
-      _user = user;
-      _accessToken = accessToken;
-      _refreshToken = refreshToken;
-
-      return true;
-    } on ApiException catch (error) {
-      _errorMessage = error.message;
-      return false;
-    } on FormatException catch (error) {
-      _errorMessage = error.message;
-      return false;
-    } catch (error) {
-      _errorMessage = 'La session n’a pas pu être enregistrée : $error';
-      return false;
+      if (_accessToken != null) {
+        await fetchUserProfile();
+      }
+    } catch (e) {
+      _errorMessage = "Erreur lors de la restauration de la session.";
+      await clearSession();
     } finally {
       _isLoading = false;
-      _notifyListeners();
-    }
-  }
-
-  /// Renouvelle les jetons et recharge le profil.
-  Future<bool> refreshSession() async {
-    final refreshToken = _refreshToken;
-
-    if (refreshToken == null) {
-      await _clearSession();
-      _notifyListeners();
-      return false;
-    }
-
-    var refreshed = false;
-
-    try {
-      await _refreshAndLoadProfile(refreshToken);
-      _errorMessage = null;
-      refreshed = true;
-    } on ApiException catch (error) {
-      _errorMessage = error.message;
-
-      if (error.statusCode == 401 || error.statusCode == 403) {
-        await _clearSession();
-      }
-    } on FormatException catch (error) {
-      _errorMessage = error.message;
-      await _clearSession();
-    } on Exception catch (error) {
-      _errorMessage = 'Impossible de renouveler la session : $error';
-    } finally {
-      _notifyListeners();
-    }
-
-    return refreshed;
-  }
-
-  /// Déconnecte l'utilisateur et efface les jetons locaux.
-  Future<bool> logout() async {
-    var revoked = true;
-
-    final accessToken = _accessToken;
-    final refreshToken = _refreshToken;
-
-    if (accessToken != null && refreshToken != null) {
-      try {
-        await _authRepository.logout(accessToken, refreshToken);
-      } on ApiException catch (error) {
-        revoked = false;
-        _errorMessage =
-            'Déconnexion locale effectuée ; révocation serveur impossible : ${error.message}';
-      } catch (error) {
-        revoked = false;
-        _errorMessage =
-            'Déconnexion locale effectuée ; révocation serveur impossible : $error';
-      }
-    }
-
-    try {
-      await _storage.clearTokens();
-    } catch (error) {
-      revoked = false;
-      _errorMessage =
-          'Impossible d’effacer les jetons de cet appareil : $error';
-    }
-
-    _user = null;
-    _accessToken = null;
-    _refreshToken = null;
-
-    _notifyListeners();
-
-    return revoked;
-  }
-
-  Future<void> _refreshAndLoadProfile(String refreshToken) async {
-    final response = await _authRepository.refresh(refreshToken);
-
-    final accessToken = _requiredToken(response['access'], 'accès');
-    final rotatedRefresh = response['refresh'];
-
-    final nextRefresh = rotatedRefresh == null
-        ? refreshToken
-        : _requiredToken(rotatedRefresh, 'renouvellement');
-
-    await _storage.saveTokens(accessToken, nextRefresh);
-
-    _accessToken = accessToken;
-    _refreshToken = nextRefresh;
-
-    await _loadProfile(accessToken);
-  }
-
-  Future<void> _loadProfile(String accessToken) async {
-    final response = await _authRepository.profile(accessToken);
-
-    _user = _validatedUser(response['user']);
-    _accessToken = accessToken;
-  }
-
-  Map<String, dynamic> _validatedUser(dynamic value) {
-    if (value is! Map<String, dynamic> ||
-        value['role'] is! String ||
-        !_roles.contains(value['role'])) {
-      throw const FormatException(
-        'Le profil renvoyé par le serveur est incomplet ou possède un rôle inconnu.',
-      );
-    }
-
-    return Map<String, dynamic>.from(value);
-  }
-
-  String _requiredToken(dynamic value, String type) {
-    if (value is! String || value.isEmpty) {
-      throw FormatException(
-        'Le jeton d’$type renvoyé par le serveur est invalide.',
-      );
-    }
-
-    return value;
-  }
-
-  Future<void> _clearSession() async {
-    await _storage.clearTokens();
-
-    _user = null;
-    _accessToken = null;
-    _refreshToken = null;
-  }
-
-  void _notifyListeners() {
-    if (!_isDisposed) {
       notifyListeners();
     }
   }
 
-  @override
-  void dispose() {
-    _isDisposed = true;
-    super.dispose();
+  /// Sauvegarde des tokens dans le stockage sécurisé
+  Future<void> _saveTokens(String access, String refresh) async {
+    _accessToken = access;
+    _refreshToken = refresh;
+    await _storage.write(key: 'access_token', value: access);
+    await _storage.write(key: 'refresh_token', value: refresh);
+  }
+
+  /// Tentative de rafraîchissement du token d'accès en cas d'expiration (401)
+  Future<bool> refreshToken() async {
+    try {
+      _refreshToken = await _storage.read(key: 'refresh_token');
+      if (_refreshToken == null) {
+        await clearSession();
+        return false;
+      }
+
+      // TODO: Remplacez par votre appel API de rafraîchissement (ex: AuthRepository.refresh(_refreshToken!))
+      // Simulation / structure type :
+      // final response = await ApiService.post('/api/token/refresh/', {'refresh': _refreshToken});
+      // await _saveTokens(response['access'], _refreshToken!);
+      
+      notifyListeners();
+      return true;
+    } catch (e) {
+      await clearSession();
+      return false;
+    }
+  }
+
+  /// Récupération du profil utilisateur connecté
+  Future<void> fetchUserProfile() async {
+    try {
+      // TODO: Remplacez par l'appel à votre API de profil
+      // _user = await AuthRepository.getProfile(_accessToken!);
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = "Impossible de récupérer le profil utilisateur.";
+      notifyListeners();
+    }
+  }
+
+  /// Connexion de l'utilisateur
+  Future<bool> login(String username, String password) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      // TODO: Appel API de connexion (ex: AuthRepository.login(username, password))
+      // const access = response['access'];
+      // const refresh = response['refresh'];
+      // _user = response['user'];
+      // await _saveTokens(access, refresh);
+
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _errorMessage = "Identifiants invalides ou erreur de connexion.";
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Déconnexion et nettoyage complet
+  Future<void> logout() async {
+    await clearSession();
+    notifyListeners();
+  }
+
+  /// Nettoyage des tokens et de l'état local
+  Future<void> clearSession() async {
+    _accessToken = null;
+    _refreshToken = null;
+    _user = null;
+    await _storage.delete(key: 'access_token');
+    await _storage.delete(key: 'refresh_token');
   }
 }
