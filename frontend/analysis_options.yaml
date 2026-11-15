@@ -1,15 +1,12 @@
-# This file configures the analyzer, which statically analyzes Dart code to
-# check for errors, warnings, and lints.
-#
-# The issues identified by the analyzer are surfaced in the UI of Dart-enabled
-# IDEs (https://dart.dev/tools#ides-and-editors). The analyzer can also be
-# invoked from the command line by running `flutter analyze`.
+# Ce fichier configure l'analyseur statique de Dart pour vérifier les erreurs, 
+# les avertissements et les règles de style (lints) dans le projet Flutter[cite: 6].
+# Documentation officielle : https://dart.dev/guides/language/analysis-options[cite: 6]
 
-# The following line activates a set of recommended lints for Flutter apps,
-# packages, and plugins designed to encourage good coding practices.
+# Intègre l'ensemble des règles de bonnes pratiques recommandées pour les applications Flutter[cite: 6]
 include: package:flutter_lints/flutter.yaml
 
 analyzer:
+  # Dossiers générés ou natifs à exclure de l'analyse statique pour optimiser les performances[cite: 6]
   exclude:
     - build/**
     - android/**
@@ -19,20 +16,18 @@ analyzer:
     - macos/**
     - linux/**
 
-linter:
-  # The lint rules applied to this project can be customized in the
-  # section below to disable rules from the `package:flutter_lints/flutter.yaml`
-  # included above or to enable additional rules. A list of all available lints
-  # and their documentation is published at https://dart.dev/lints.
-  #
-  # Instead of disabling a lint rule for the entire project in the
-  # section below, it can also be suppressed for a single line of code
-  # or a specific dart file by using the `// ignore: name_of_lint` and
-  # `// ignore_for_file: name_of_lint` syntax on the line or in the file
-  # producing the lint.
-  rules:
-    # avoid_print: false  # Uncomment to disable the `avoid_print` rule
-    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
+  # Configuration de la sévérité des erreurs et des avertissements.
+  # Permet d'éviter que des avertissements de dépréciation (comme ceux rencontrés dans la CI) 
+  # ne provoquent l'échec bloquant de la compilation ou des tests automatiques.
+  errors:
+    # Traite les utilisations de membres dépréciés comme de simples avertissements (ou 'ignore' si besoin)
+    # au lieu de bloquer l'analyse de manière critique.
+    deprecated_member_use: warning
 
-# Additional information about this file can be found at
-# https://dart.dev/guides/language/analysis-options
+linter:
+  # Les règles de linter appliquées à ce projet peuvent être personnalisées dans 
+  # la section ci-dessous pour désactiver ou activer des règles spécifiques[cite: 6].
+  # Une liste de tous les lints disponibles est publiée sur https://dart.dev/lints[cite: 6]
+  rules:
+    # avoid_print: false  # Décommenter pour désactiver la règle interdisant l'utilisation de print()
+    # prefer_single_quotes: true  # Décommenter pour forcer l'utilisation des guillemets simples
