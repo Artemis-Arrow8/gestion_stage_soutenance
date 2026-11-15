@@ -6,6 +6,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_USER: ${DB_USER:?Définir DB_USER=sgsus_app_user dans .env}
+      DB_PASSWORD: ${DB_PASSWORD:?Définir un secret DB_PASSWORD dans .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -14,24 +16,82 @@ services:
       timeout: 5s
       retries: 10
 
+  db-role-init:
+    image: postgres:17
+    restart: "no"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_USER: ${DB_USER:?Définir DB_USER=sgsus_app_user dans .env}
+      DB_PASSWORD: ${DB_PASSWORD:?Définir un secret DB_PASSWORD dans .env}
+    volumes:
+      - ./database/provision-app-role.sql:/provision-app-role.sql:ro
+    entrypoint:
+      - sh
+      - -ec
+      - |
+        # Le mot de passe administrateur reste dans l'environnement du conteneur DB.
+        export PGPASSWORD="$$POSTGRES_PASSWORD"
+        exec psql --host=db --username="$$POSTGRES_USER" --dbname="$$POSTGRES_DB" --set=ON_ERROR_STOP=1 --file=/provision-app-role.sql
+    depends_on:
+      db:
+        condition: service_healthy
+
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Définir DJANGO_SECRET_KEY dans .env}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:?Définir les hôtes de démonstration dans .env}
+      DJANGO_CORS_ALLOWED_ORIGINS: ${DJANGO_CORS_ALLOWED_ORIGINS:-}
+      DJANGO_SECURE_SSL_REDIRECT: ${DJANGO_SECURE_SSL_REDIRECT:-False}
+      DJANGO_SECURE_COOKIES: ${DJANGO_SECURE_COOKIES:-False}
+      DJANGO_BEHIND_HTTPS_PROXY: ${DJANGO_BEHIND_HTTPS_PROXY:-False}
+      DJANGO_SECURE_HSTS_SECONDS: ${DJANGO_SECURE_HSTS_SECONDS:-0}
+      DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS: ${DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS:-False}
+      DJANGO_SECURE_HSTS_PRELOAD: ${DJANGO_SECURE_HSTS_PRELOAD:-False}
+      POSTGRES_DB: ${POSTGRES_DB}
+      DB_USER: ${DB_USER:?Définir DB_USER=sgsus_app_user dans .env}
+      DB_PASSWORD: ${DB_PASSWORD:?Définir un secret DB_PASSWORD dans .env}
+      DB_ADMIN_USER: ${POSTGRES_USER}
       DB_HOST: db
       DB_PORT: 5432
+      JWT_ACCESS_TOKEN_MINUTES: ${JWT_ACCESS_TOKEN_MINUTES:-5}
+      JWT_REFRESH_TOKEN_DAYS: ${JWT_REFRESH_TOKEN_DAYS:-1}
+      JWT_ROTATE_REFRESH_TOKENS: ${JWT_ROTATE_REFRESH_TOKENS:-True}
+      JWT_BLACKLIST_AFTER_ROTATION: ${JWT_BLACKLIST_AFTER_ROTATION:-True}
+      DJANGO_EMAIL_BACKEND: ${DJANGO_EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
+      DJANGO_EMAIL_HOST: ${DJANGO_EMAIL_HOST:-}
+      DJANGO_EMAIL_PORT: ${DJANGO_EMAIL_PORT:-587}
+      DJANGO_EMAIL_HOST_USER: ${DJANGO_EMAIL_HOST_USER:-}
+      DJANGO_EMAIL_HOST_PASSWORD: ${DJANGO_EMAIL_HOST_PASSWORD:-}
+      DJANGO_EMAIL_USE_TLS: ${DJANGO_EMAIL_USE_TLS:-True}
+      DJANGO_EMAIL_USE_SSL: ${DJANGO_EMAIL_USE_SSL:-False}
+      DJANGO_DEFAULT_FROM_EMAIL: ${DJANGO_DEFAULT_FROM_EMAIL:-noreply@localhost}
+      SGSUS_DEMO_PASSWORD: ${SGSUS_DEMO_PASSWORD:-}
       DJANGO_MEDIA_ROOT: /app/media
     ports:
       - "${DJANGO_BIND_ADDRESS:-127.0.0.1}:${DJANGO_PORT:-8000}:8000"
     volumes:
       - media_data:/app/media
+    # La sonde locale confirme que Gunicorn accepte les connexions dans le conteneur.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; socket.create_connection(('127.0.0.1', 8000), timeout=3).close()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
-      db:
-        condition: service_healthy
+      db-role-init:
+        condition: service_completed_successfully
       media-init:
         condition: service_completed_successfully
 

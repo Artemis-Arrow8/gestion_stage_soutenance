@@ -43,7 +43,7 @@ docker compose exec backend python manage.py createsuperuser
 docker compose logs --tail 100 backend
 ```
 
-Le backend utilise Gunicorn, tourne sous un compte non privilégié et sert les fichiers statiques préparés dans l’image. Pour une base déjà utilisée, sauvegarder et examiner l’état des migrations avant de les appliquer. Le guide de déploiement temporaire est dans [docs/guide-exploitation.md](docs/guide-exploitation.md).
+Le backend utilise Gunicorn, tourne sous un compte non privilégié et se connecte à PostgreSQL avec le rôle `sgsus_app_user`, distinct du compte d'administration. Compose prépare ce rôle également sur un volume déjà initialisé. Pour une base déjà utilisée, sauvegarder et examiner l’état des migrations avant de les appliquer. Le guide de déploiement temporaire est dans [docs/guide-exploitation.md](docs/guide-exploitation.md).
 
 Après migration, les données de présentation se créent avec `python manage.py seed_sgsus`. La commande requiert `SGSUS_DEMO_PASSWORD`, est idempotente et refuse par défaut `DJANGO_DEBUG=False`. Les identifiants de test et les consignes figurent dans [docs/guide-exploitation.md](docs/guide-exploitation.md).
 

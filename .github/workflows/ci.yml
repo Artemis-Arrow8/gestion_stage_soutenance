@@ -40,8 +40,9 @@ jobs:
         image: postgres:17
         env:
           POSTGRES_DB: gestion_stage_soutenance
+          # Ce compte privilégié ne sert qu'à créer la base de test éphémère en CI.
           POSTGRES_USER: gestion_user
-          POSTGRES_PASSWORD: ci-test-password
+          POSTGRES_PASSWORD: ci-test-admin-password-not-for-production
         ports:
           - 5432:5432
         options: >-
@@ -74,7 +75,10 @@ jobs:
           DJANGO_DEBUG: "True"
           POSTGRES_DB: gestion_stage_soutenance
           POSTGRES_USER: gestion_user
-          POSTGRES_PASSWORD: ci-test-password
+          POSTGRES_PASSWORD: ci-test-admin-password-not-for-production
+          DB_USER: gestion_user
+          DB_PASSWORD: ci-test-admin-password-not-for-production
+          DB_ADMIN_USER: gestion_user
           DB_HOST: localhost
           DB_PORT: "5432"
         run: python manage.py check
@@ -85,7 +89,10 @@ jobs:
           DJANGO_DEBUG: "True"
           POSTGRES_DB: gestion_stage_soutenance
           POSTGRES_USER: gestion_user
-          POSTGRES_PASSWORD: ci-test-password
+          POSTGRES_PASSWORD: ci-test-admin-password-not-for-production
+          DB_USER: gestion_user
+          DB_PASSWORD: ci-test-admin-password-not-for-production
+          DB_ADMIN_USER: gestion_user
           DB_HOST: localhost
           DB_PORT: "5432"
         run: python manage.py test
@@ -96,10 +103,41 @@ jobs:
           DJANGO_DEBUG: "True"
           POSTGRES_DB: gestion_stage_soutenance
           POSTGRES_USER: gestion_user
-          POSTGRES_PASSWORD: ci-test-password
+          POSTGRES_PASSWORD: ci-test-admin-password-not-for-production
+          DB_USER: gestion_user
+          DB_PASSWORD: ci-test-admin-password-not-for-production
+          DB_ADMIN_USER: gestion_user
           DB_HOST: localhost
           DB_PORT: "5432"
         run: python manage.py makemigrations --check --dry-run
+
+      - name: Vérifier l’isolation du rôle applicatif
+        # Le compte admin CI est éphémère ; Django en production n’y accède jamais.
+        env:
+          POSTGRES_DB: gestion_stage_soutenance
+          POSTGRES_USER: gestion_user
+          POSTGRES_PASSWORD: ci-test-admin-password-not-for-production
+          DB_USER: sgsus_app_user
+          DB_PASSWORD: ci-test-app-password-not-for-production
+        run: |
+          export PGPASSWORD="$POSTGRES_PASSWORD"
+          psql --host localhost --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+            --set=ON_ERROR_STOP=1 --command \
+            "CREATE TABLE public.role_init_fixture (id serial PRIMARY KEY)"
+          psql --host localhost --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
+            --set=ON_ERROR_STOP=1 --file ../database/provision-app-role.sql
+          export PGPASSWORD="$DB_PASSWORD"
+          attributes="$(psql --host localhost --username "$DB_USER" --dbname "$POSTGRES_DB" \
+            --no-align --tuples-only --command \
+            "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolinherit, has_schema_privilege(current_user, 'public', 'CREATE') FROM pg_roles WHERE rolname = current_user")"
+          test "$attributes" = "t|f|f|f|f|f|f|t"
+          psql --host localhost --username "$DB_USER" --dbname "$POSTGRES_DB" \
+            --set=ON_ERROR_STOP=1 --command \
+            "ALTER TABLE public.role_init_fixture ADD COLUMN role_can_migrate boolean"
+          sequence_value="$(psql --host localhost --username "$DB_USER" --dbname "$POSTGRES_DB" \
+            --no-align --tuples-only --command \
+            "SELECT nextval('public.role_init_fixture_id_seq')")"
+          test "$sequence_value" = "1"
 
       - name: Construire l'image Docker
         # Le contexte racine fournit aussi database/schema.sql au Dockerfile.

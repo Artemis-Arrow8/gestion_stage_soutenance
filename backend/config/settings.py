@@ -78,9 +78,11 @@ ALLOWED_HOSTS = [
     if host.strip()
 ]
 
-if not DEBUG and not os.getenv("DJANGO_ALLOWED_HOSTS", "").strip():
+if not DEBUG and (
+    not os.getenv("DJANGO_ALLOWED_HOSTS", "").strip() or not ALLOWED_HOSTS
+):
     raise ImproperlyConfigured(
-        "DJANGO_ALLOWED_HOSTS doit être explicitement défini en production."
+        "DJANGO_ALLOWED_HOSTS doit contenir au moins un hôte en production."
     )
 if not DEBUG and "*" in ALLOWED_HOSTS:
     raise ImproperlyConfigured(
@@ -138,6 +140,14 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = _env_bool(
 SECURE_HSTS_PRELOAD = _env_bool("DJANGO_SECURE_HSTS_PRELOAD", False)
 SESSION_COOKIE_SECURE = SECURE_COOKIES
 CSRF_COOKIE_SECURE = SECURE_COOKIES
+if not DEBUG and not SECURE_SSL_REDIRECT:
+    raise ImproperlyConfigured(
+        "DJANGO_SECURE_SSL_REDIRECT doit être activé en production."
+    )
+if not DEBUG and not SECURE_COOKIES:
+    raise ImproperlyConfigured(
+        "DJANGO_SECURE_COOKIES doit être activé en production."
+    )
 # DJANGO_BEHIND_HTTPS_PROXY n'est activé que si le proxy maîtrisé écrase
 # réellement l'en-tête X-Forwarded-Proto reçu du client.
 SECURE_PROXY_SSL_HEADER = (
@@ -168,8 +178,15 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
-# POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD et DB_HOST/DB_PORT décrivent
-# la connexion PostgreSQL ; Compose remplace DB_HOST/DB_PORT par db:5432.
+# DB_USER et DB_PASSWORD identifient le rôle applicatif ; les identifiants
+# administrateur restent réservés aux services PostgreSQL de Compose.
+DB_USER = os.getenv("DB_USER", "").strip()
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+if DEBUG:
+    # Compatibilité avec les installations locales historiques hors Compose.
+    DB_USER = DB_USER or os.getenv("POSTGRES_USER", "gestion_user")
+    DB_PASSWORD = DB_PASSWORD or os.getenv("POSTGRES_PASSWORD", "")
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
@@ -177,14 +194,8 @@ DATABASES = {
             "POSTGRES_DB",
             "gestion_stage_soutenance"
         ),
-        "USER": os.getenv(
-            "POSTGRES_USER",
-            "gestion_user"
-        ),
-        "PASSWORD": os.getenv(
-            "POSTGRES_PASSWORD",
-            ""
-        ),
+        "USER": DB_USER,
+        "PASSWORD": DB_PASSWORD,
         "HOST": os.getenv(
             "DB_HOST",
             "localhost"
@@ -196,11 +207,18 @@ DATABASES = {
     }
 }
 if not DEBUG and (
-    not DATABASES["default"]["PASSWORD"]
-    or DATABASES["default"]["PASSWORD"].startswith("replace-with-")
+    len(DATABASES["default"]["PASSWORD"]) < 32
+    or DATABASES["default"]["PASSWORD"].startswith(("replace-with-", "dev-only-"))
+    or not DATABASES["default"]["USER"]
 ):
     raise ImproperlyConfigured(
-        "POSTGRES_PASSWORD doit être un secret personnalisé en production."
+        "DB_USER doit être défini et DB_PASSWORD doit être un secret personnalisé d'au moins 32 caractères en production."
+    )
+if not DEBUG and (
+    DATABASES["default"]["USER"] == os.getenv("DB_ADMIN_USER", "").strip()
+):
+    raise ImproperlyConfigured(
+        "DB_USER doit être distinct du compte administrateur PostgreSQL."
     )
 
 # Password validation

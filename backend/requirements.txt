@@ -1,16 +1,73 @@
-Django==6.0.4
-djangorestframework==3.17.1
-django-cors-headers==4.9.0
-djangorestframework-simplejwt==5.5.1
-gunicorn>=23,<24
-whitenoise>=6.8,<7
-psycopg2-binary==2.9.11
-python-decouple==3.8
-python-dotenv==1.2.2
-Pillow==12.2.0
-qrcode==8.2
-django-filter==25.2
-django-crispy-forms==2.6
-crispy-bootstrap5==2026.3
-pytest
-pytest-django
+# =========================================================================
+
+# Fichier des dépendances (requirements.txt) - Projet SGSUS
+
+# Configuré sans versions figées (==) pour permettre à pip de récupérer 
+
+# les versions compatibles et éviter les blocages de compatibilité.
+
+# =========================================================================
+
+
+
+# Framework web principal Django
+
+django>=4.2
+
+
+
+# --- API REST & Authentification ---
+
+djangorestframework              # Boîte à outils pour créer des API REST puissantes
+
+django-cors-headers              # Gestion des en-têtes CORS pour autoriser le front-end Flutter
+
+djangorestframework-simplejwt    # Authentification par JWT (JSON Web Tokens) pour l'API
+
+
+
+# --- Production & Serveur Web ---
+
+gunicorn                         # Serveur WSGI robuste pour exécuter Django en production
+
+whitenoise                       # Middleware pour servir efficacement les fichiers statiques (requis sur Render)
+
+
+
+# --- Base de données ---
+
+psycopg2-binary                  # Pilote PostgreSQL pour connecter Django à la base de données
+
+
+
+# --- Configuration & Environnement ---
+
+python-decouple                  # Gestion propre des variables d'environnement
+
+python-dotenv                    # Chargement du fichier .env en local
+
+
+
+# --- Utilitaires & Médias ---
+
+Pillow                           # Bibliothèque de traitement d'images (pour les uploads)
+
+qrcode                           # Génération de codes QR (utilisé pour les soutenances/badges)
+
+
+
+# --- Formulaires & Affichage ---
+
+django-filter                    # Filtrage dynamique des requêtes pour les API REST
+
+django-crispy-forms              # Amélioration du rendu des formulaires Django
+
+crispy-bootstrap5                # Intégration du design Bootstrap 5 pour crispy-forms
+
+
+
+# --- Tests & Qualité ---
+
+pytest                           # Framework de tests unitaires avancé
+
+pytest-django                    # Intégration de pytest avec l'écosystème Django
