@@ -78,9 +78,9 @@ ALLOWED_HOSTS = [
     if host.strip()
 ]
 
-if not DEBUG and not ALLOWED_HOSTS:
+if not DEBUG and not os.getenv("DJANGO_ALLOWED_HOSTS", "").strip():
     raise ImproperlyConfigured(
-        "DJANGO_ALLOWED_HOSTS doit contenir au moins un nom d'hôte en production."
+        "DJANGO_ALLOWED_HOSTS doit être explicitement défini en production."
     )
 if not DEBUG and "*" in ALLOWED_HOSTS:
     raise ImproperlyConfigured(

@@ -18,6 +18,9 @@ db.sqlite3
 media/
 staticfiles/
 
+# Les sauvegardes peuvent contenir des données personnelles et des secrets.
+backups/
+
 # Flutter et Dart
 .dart_tool/
 .packages

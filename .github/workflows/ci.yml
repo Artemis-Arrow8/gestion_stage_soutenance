@@ -102,4 +102,6 @@ jobs:
         run: python manage.py makemigrations --check --dry-run
 
       - name: Construire l'image Docker
-        run: docker build -t gestion-stage-soutenance:ci -f Dockerfile .
+        # Le contexte racine fournit aussi database/schema.sql au Dockerfile.
+        working-directory: .
+        run: docker build -t gestion-stage-soutenance:ci -f backend/Dockerfile .
