@@ -278,12 +278,21 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # 6. CORS ET CSRF (communication avec le frontend Flutter Web)
 # =========================================================================
 
+# Adresse publique du site Flutter Web publié sur Render (Static Site créé
+# par le Blueprint `render.yaml`).
+FRONTEND_RENDER_ORIGIN = "https://gestion-stage-soutenance-frontend.onrender.com"
+
 # DJANGO_CORS_ALLOWED_ORIGINS : origines exactes du frontend, séparées par des
-# virgules (ex. https://gestion-stage-soutenance-frontend.onrender.com).
-# Flutter mobile/desktop n'est pas soumis au CORS ; seul le Web l'est.
+# virgules. Si la variable est absente sur Render, le site Flutter ci-dessus
+# est autorisé par défaut ; une valeur définie dans le tableau de bord Render
+# reste toujours prioritaire. Flutter mobile/desktop n'est pas soumis au
+# CORS ; seul le Web l'est.
 CORS_ALLOWED_ORIGINS = [
     _normaliser_origine("DJANGO_CORS_ALLOWED_ORIGINS", origine)
-    for origine in _env_list("DJANGO_CORS_ALLOWED_ORIGINS")
+    for origine in _env_list(
+        "DJANGO_CORS_ALLOWED_ORIGINS",
+        FRONTEND_RENDER_ORIGIN if SUR_RENDER else "",
+    )
 ]
 
 # En développement, `flutter run -d chrome` utilise un port aléatoire sur

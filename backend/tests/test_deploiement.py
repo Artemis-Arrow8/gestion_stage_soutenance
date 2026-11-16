@@ -129,13 +129,16 @@ class OriginesCorsTests(SimpleTestCase):
 class ReglagesRenderTests(unittest.TestCase):
     """Vérifie la configuration automatique propre à Render."""
 
-    def _importer_reglages(self, commande, **variables):
+    def _importer_reglages(self, commande, sans_dotenv=False, **variables):
         """
         Importe les réglages dans un sous-processus de production simulé.
 
         Paramètres :
             commande (str) : code Python exécuté après l'import.
-            **variables : variables d'environnement à ajouter ou remplacer.
+            sans_dotenv (bool) : neutralise le chargement du fichier `.env`
+                local, pour tester une variable réellement absente.
+            **variables : variables d'environnement à ajouter ou remplacer ;
+                la valeur None retire la variable.
 
         Retour :
             subprocess.CompletedProcess : code de retour, stdout et stderr.
@@ -162,9 +165,22 @@ class ReglagesRenderTests(unittest.TestCase):
         # Les variables Render ne doivent pas fuiter de l'environnement réel.
         for nom in ('RENDER', 'RENDER_EXTERNAL_HOSTNAME', 'DJANGO_BEHIND_HTTPS_PROXY'):
             environnement.pop(nom, None)
-        environnement.update(variables)
+        for nom, valeur in variables.items():
+            if valeur is None:
+                environnement.pop(nom, None)
+            else:
+                environnement[nom] = valeur
+        # Remplace `load_dotenv` par une fonction vide avant l'import.
+        prefixe = (
+            'import dotenv; dotenv.load_dotenv = lambda *a, **k: False; '
+            if sans_dotenv else ''
+        )
         return subprocess.run(
-            [sys.executable, '-c', f'import config.settings as s; {commande}'],
+            [
+                sys.executable,
+                '-c',
+                f'{prefixe}import config.settings as s; {commande}',
+            ],
             cwd=BACKEND_DIR,
             env=environnement,
             capture_output=True,
@@ -205,6 +221,23 @@ class ReglagesRenderTests(unittest.TestCase):
 
         self.assertEqual(resultat.returncode, 0, resultat.stderr)
         self.assertEqual(resultat.stdout.strip(), 'None')
+
+    def test_render_autorise_le_frontend_par_defaut(self):
+        """Sans variable CORS sur Render, le site Flutter publié est autorisé."""
+        # La variable est retirée (et le `.env` local ignoré) pour tester
+        # la valeur par défaut.
+        resultat = self._importer_reglages(
+            'print(s.CORS_ALLOWED_ORIGINS)',
+            sans_dotenv=True,
+            RENDER='true',
+            RENDER_EXTERNAL_HOSTNAME='sgsus-api.onrender.com',
+            DJANGO_CORS_ALLOWED_ORIGINS=None,
+        )
+        self.assertEqual(resultat.returncode, 0, resultat.stderr)
+        self.assertEqual(
+            resultat.stdout.strip(),
+            "['https://gestion-stage-soutenance-frontend.onrender.com']",
+        )
 
     def test_les_origines_cors_sont_normalisees(self):
         """Une barre oblique finale est tolérée puis retirée."""
