@@ -31,6 +31,8 @@ SGSUS est une application de gestion des stages et des soutenances universitaire
 
    L'adresse API locale par défaut est `http://127.0.0.1:8001/api`. Pour utiliser Render, remplacer cette valeur au lancement avec `--dart-define=API_BASE_URL=https://NOM-DU-WEB-SERVICE.onrender.com/api`. Ne jamais mettre `DATABASE_URL` dans Flutter : cette variable est réservée à Django. Pour Flutter Web, autoriser l'origine exacte de l'application par CORS.
 
+4. Pour publier Flutter Web sur Render, le fichier [`render.yaml`](./render.yaml) ajoute un site statique séparé. Créer/synchroniser ce Blueprint dans Render ; le build télécharge Flutter 3.47.6 et publie `frontend/build/web`. Après le premier déploiement, copier l’origine HTTPS exacte affichée pour le Static Site dans `DJANGO_CORS_ALLOWED_ORIGINS` du Web Service backend, puis redéployer le backend.
+
 ## Docker Compose
 
 Après avoir configuré `.env`, valider et démarrer les services. Compose utilise le port PostgreSQL interne 5432 entre conteneurs, même si `DB_PORT` configure un autre port local.

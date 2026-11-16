@@ -1,0 +1,11 @@
+services:
+  # Le frontend Web est publié séparément de l'API Django.
+  - type: web
+    name: gestion-stage-soutenance-frontend
+    runtime: static
+    buildCommand: bash scripts/build-flutter-web.sh
+    staticPublishPath: frontend/build/web
+    envVars:
+      # Cette URL est publique et pointe vers l'API HTTP, jamais vers PostgreSQL.
+      - key: API_BASE_URL
+        value: https://gestion-stage-soutenance.onrender.com/api
