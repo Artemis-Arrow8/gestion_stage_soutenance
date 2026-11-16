@@ -1,4 +1,4 @@
-﻿# Variables d'environnement et secrets
+# Variables d'environnement et secrets
 .env
 .env.*
 !.env.example
@@ -6,6 +6,9 @@
 
 # Python
 __pycache__/
+.coverage
+htmlcov/
+.pytest_cache/
 *.py[cod]
 *.pyo
 .venv/

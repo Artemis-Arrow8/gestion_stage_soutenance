@@ -1,73 +1,27 @@
 # =========================================================================
-
-# Fichier des dépendances (requirements.txt) - Projet SGSUS
-
-# Configuré sans versions figées (==) pour permettre à pip de récupérer 
-
-# les versions compatibles et éviter les blocages de compatibilité.
-
+# Dépendances d'exécution du backend SGSUS (image Docker / Render).
+#
+# Politique de versions : pas de version figée (==), mais une borne basse
+# (version testée) et une borne haute sur la version majeure suivante, afin
+# de recevoir les correctifs sans risquer une rupture de compatibilité.
+#
+# Outils de test et de développement : voir requirements-dev.txt.
 # =========================================================================
 
+# --- Framework web --------------------------------------------------------
+Django>=6.0,<7.0                              # Framework web principal
 
+# --- API REST & authentification ------------------------------------------
+djangorestframework>=3.16,<4.0                # Boîte à outils des API REST
+djangorestframework-simplejwt>=5.5,<6.0       # Authentification par JWT (+ liste noire)
+django-cors-headers>=4.4,<5.0                 # En-têtes CORS pour Flutter Web
 
-# Framework web principal Django
+# --- Production & serveur web -----------------------------------------------
+gunicorn>=23.0                                # Serveur WSGI de production
+whitenoise>=6.6,<7.0                          # Fichiers statiques servis par Django
 
-django>=4.2
+# --- Base de données ----------------------------------------------------------
+psycopg2-binary>=2.9.10,<3.0                  # Pilote PostgreSQL (libpq incluse)
 
-
-
-# --- API REST & Authentification ---
-
-djangorestframework              # Boîte à outils pour créer des API REST puissantes
-
-django-cors-headers              # Gestion des en-têtes CORS pour autoriser le front-end Flutter
-
-djangorestframework-simplejwt    # Authentification par JWT (JSON Web Tokens) pour l'API
-
-
-
-# --- Production & Serveur Web ---
-
-gunicorn                         # Serveur WSGI robuste pour exécuter Django en production
-
-whitenoise                       # Middleware pour servir efficacement les fichiers statiques (requis sur Render)
-
-
-
-# --- Base de données ---
-
-psycopg2-binary                  # Pilote PostgreSQL pour connecter Django à la base de données
-
-
-
-# --- Configuration & Environnement ---
-
-python-decouple                  # Gestion propre des variables d'environnement
-
-python-dotenv                    # Chargement du fichier .env en local
-
-
-
-# --- Utilitaires & Médias ---
-
-Pillow                           # Bibliothèque de traitement d'images (pour les uploads)
-
-qrcode                           # Génération de codes QR (utilisé pour les soutenances/badges)
-
-
-
-# --- Formulaires & Affichage ---
-
-django-filter                    # Filtrage dynamique des requêtes pour les API REST
-
-django-crispy-forms              # Amélioration du rendu des formulaires Django
-
-crispy-bootstrap5                # Intégration du design Bootstrap 5 pour crispy-forms
-
-
-
-# --- Tests & Qualité ---
-
-pytest                           # Framework de tests unitaires avancé
-
-pytest-django                    # Intégration de pytest avec l'écosystème Django
+# --- Configuration -------------------------------------------------------------
+python-dotenv>=1.0,<2.0                       # Chargement du fichier .env en local

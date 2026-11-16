@@ -1,51 +1,58 @@
+/// Fiche détaillée d'une soutenance : étudiant, créneau, salle, jury et
+/// accès aux documents du dossier.
+library;
+
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
+
+import '../core/theme/app_theme.dart';
+import '../core/utils/dates.dart';
 import '../models/defense.dart';
 import '../providers/auth_provider.dart';
-import '../theme/app_theme.dart';
-import '../utils/dates.dart';
 import '../widgets/app_shell.dart';
 import '../widgets/ui_kit.dart';
 import 'defense_form_screen.dart';
-import 'documents_screen.dart';
-import 'planning_screen.dart';
 
+/// Écran de détail d'une soutenance.
 class DefenseDetailScreen extends StatelessWidget {
+  /// Crée la fiche de [defense].
   const DefenseDetailScreen({super.key, required this.defense});
 
+  /// Soutenance affichée.
   final Defense defense;
 
+  /// Membres du jury extraits du nom de jury (« A, B, C »).
   List<String> get _membresJury => defense.juryName
       .split(',')
       .map((e) => e.trim())
       .where((e) => e.isNotEmpty)
       .toList();
 
-  void _push(BuildContext context, Widget page) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => page));
-  }
-
   @override
   Widget build(BuildContext context) {
     final d = parseDefenseDate(defense.date);
-    final role = context.read<AuthProvider>().role;
-    final peutGerer = const {'admin', 'responsible'}.contains(role);
+    final auth = context.read<AuthProvider>();
 
     return SgPage(
       section: AppSection.planning,
       title: 'Détails de la soutenance',
       subtitle: 'Fiche complète : étudiant, créneau, salle et jury.',
       actions: [
-        if (peutGerer)
-          SgButton('Dupliquer',
-              icon: Icons.copy_rounded,
-              variant: SgBtnVariant.outline,
-              onPressed: () =>
-                  _push(context, DefenseFormScreen(initial: defense))),
-        SgButton('Planning',
-            icon: Icons.calendar_month_outlined,
+        // Dupliquer = ouvrir le formulaire prérempli avec cette soutenance.
+        if (auth.canManage)
+          SgButton(
+            'Dupliquer',
+            icon: Icons.copy_rounded,
             variant: SgBtnVariant.outline,
-            onPressed: () => _push(context, const PlanningScreen())),
+            onPressed: () =>
+                pushPage(context, DefenseFormScreen(initial: defense)),
+          ),
+        SgButton(
+          'Retour au planning',
+          icon: Icons.calendar_month_outlined,
+          variant: SgBtnVariant.outline,
+          onPressed: () => navigateToSection(context, AppSection.planning),
+        ),
       ],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -55,7 +62,8 @@ class DefenseDetailScreen extends StatelessWidget {
           _infos(d),
           const SizedBox(height: 16),
           _jury(),
-          if (role != 'jury') ...[
+          // Le jury n'a pas accès à la gestion documentaire.
+          if (auth.role != 'jury') ...[
             const SizedBox(height: 16),
             _documents(context),
           ],
@@ -64,13 +72,14 @@ class DefenseDetailScreen extends StatelessWidget {
     );
   }
 
+  /// En-tête sombre : étudiant, sujet, statut, date et horaires.
   Widget _entete(DateTime? d) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: AppColors.ink,
-        borderRadius: BorderRadius.circular(16),
+        gradient: AppTheme.inkGradient,
+        borderRadius: BorderRadius.circular(AppTheme.radius + 2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -78,44 +87,52 @@ class DefenseDetailScreen extends StatelessWidget {
           Row(
             children: [
               Container(
-                width: 42,
-                height: 42,
+                width: 46,
+                height: 46,
                 decoration: BoxDecoration(
                   gradient: AppTheme.goldLine,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(13),
                 ),
-                child: const Icon(Icons.school_rounded,
-                    size: 22, color: AppColors.ink),
+                child: const Icon(
+                  Icons.school_rounded,
+                  size: 23,
+                  color: AppColors.ink,
+                ),
               ),
-              const SizedBox(width: 13),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(defense.studentName,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 17,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -0.3)),
+                    Text(
+                      defense.studentName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
                     const SizedBox(height: 4),
-                    Text(defense.subject,
-                        style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.7),
-                            fontSize: 12.5,
-                            height: 1.35)),
+                    Text(
+                      defense.subject,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.7),
+                        fontSize: 13,
+                        height: 1.4,
+                      ),
+                    ),
                   ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
-              SgBadge(defense.status,
-                  tone: sgToneForStatus(defense.status)),
+              SgBadge(defense.status, tone: sgToneForStatus(defense.status)),
               SgBadge(
                 d == null ? 'Date invalide' : shortDate(d),
                 tone: SgTone.gold,
@@ -135,16 +152,16 @@ class DefenseDetailScreen extends StatelessWidget {
     );
   }
 
+  /// Carte des informations clés, disposées en grille adaptative.
   Widget _infos(DateTime? d) {
     final fiches = <SgKv>[
       SgKv(label: 'Étudiant', value: defense.studentName),
       SgKv(label: 'Sujet', value: defense.subject),
+      SgKv(label: 'Date', value: d == null ? defense.date : longDate(d)),
       SgKv(
-          label: 'Date',
-          value: d == null ? defense.date : shortDate(d)),
-      SgKv(
-          label: 'Horaires',
-          value: '${defense.startTime} – ${defense.endTime}'),
+        label: 'Horaires',
+        value: '${defense.startTime} – ${defense.endTime}',
+      ),
       SgKv(label: 'Salle', value: defense.roomName),
       SgKv(label: 'Statut', value: defense.status),
     ];
@@ -153,15 +170,11 @@ class DefenseDetailScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('INFORMATIONS',
-              style: TextStyle(
-                  fontSize: 9.5,
-                  letterSpacing: .8,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.greyLight)),
-          const SizedBox(height: 14),
+          const SgOverline('Informations'),
+          const SizedBox(height: 16),
           LayoutBuilder(
             builder: (context, c) {
+              // 3 colonnes sur grand écran, 2 sinon.
               final parLigne = c.maxWidth >= 640 ? 3 : 2;
               final lignes = <List<SgKv>>[];
               for (var i = 0; i < fiches.length; i += parLigne) {
@@ -171,16 +184,20 @@ class DefenseDetailScreen extends StatelessWidget {
                 children: [
                   for (final ligne in lignes)
                     Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
+                      padding: const EdgeInsets.only(bottom: 16),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          for (var i = 0; i < ligne.length; i++)
+                          for (var i = 0; i < parLigne; i++)
                             Expanded(
                               child: Padding(
                                 padding: EdgeInsets.only(
-                                    right: i < ligne.length - 1 ? 10 : 0),
-                                child: ligne[i],
+                                  right: i < parLigne - 1 ? 12 : 0,
+                                ),
+                                // Cellule vide pour aligner la dernière ligne.
+                                child: i < ligne.length
+                                    ? ligne[i]
+                                    : const SizedBox.shrink(),
                               ),
                             ),
                         ],
@@ -195,22 +212,20 @@ class DefenseDetailScreen extends StatelessWidget {
     );
   }
 
+  /// Carte de composition du jury (le premier membre préside).
   Widget _jury() {
     final membres = _membresJury;
     return SgCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('JURY',
-              style: TextStyle(
-                  fontSize: 9.5,
-                  letterSpacing: .8,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.greyLight)),
-          const SizedBox(height: 12),
+          const SgOverline('Jury'),
+          const SizedBox(height: 14),
           if (membres.isEmpty)
-            const Text('Aucun jury affecté.',
-                style: TextStyle(fontSize: 12.5, color: AppColors.grey))
+            const Text(
+              'Aucun jury affecté.',
+              style: TextStyle(fontSize: 13, color: AppColors.grey),
+            )
           else
             Wrap(
               spacing: 10,
@@ -219,23 +234,28 @@ class DefenseDetailScreen extends StatelessWidget {
                 for (var i = 0; i < membres.length; i++)
                   Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 11, vertical: 8),
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFAFAFA),
-                      borderRadius: BorderRadius.circular(9),
+                      color: AppColors.surfaceAlt,
+                      borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: AppColors.line),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        SgAvatar(initials: initiales(membres[i]), size: 26),
-                        const SizedBox(width: 8),
-                        Text(membres[i],
-                            style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600)),
+                        SgAvatar(initials: initiales(membres[i]), size: 28),
+                        const SizedBox(width: 9),
+                        Text(
+                          membres[i],
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                         if (i == 0) ...[
-                          const SizedBox(width: 7),
+                          const SizedBox(width: 8),
                           const SgBadge('Président', tone: SgTone.gold),
                         ],
                       ],
@@ -248,29 +268,25 @@ class DefenseDetailScreen extends StatelessWidget {
     );
   }
 
+  /// Carte de renvoi vers la gestion documentaire du dossier.
   Widget _documents(BuildContext context) {
     return SgCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('DOCUMENTS ASSOCIÉS',
-              style: TextStyle(
-                  fontSize: 9.5,
-                  letterSpacing: .8,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.greyLight)),
+          const SgOverline('Documents associés'),
           const SizedBox(height: 12),
           const Text(
-            'Les rapports et versions liés à ce dossier de stage sont centralisés dans la gestion documentaire.',
-            style: TextStyle(
-                fontSize: 12, color: AppColors.grey, height: 1.5),
+            'Les rapports et versions liés à ce dossier de stage sont '
+            'centralisés dans la gestion documentaire.',
+            style: TextStyle(fontSize: 13, color: AppColors.grey, height: 1.5),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           SgButton(
             'Consulter la gestion documentaire',
             icon: Icons.folder_open_rounded,
             variant: SgBtnVariant.outline,
-            onPressed: () => _push(context, const DocumentsScreen()),
+            onPressed: () => navigateToSection(context, AppSection.documents),
           ),
         ],
       ),

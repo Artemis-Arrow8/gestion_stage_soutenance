@@ -1,25 +1,41 @@
-import uuid
-from pathlib import Path
+"""
+Services métier de la gestion documentaire (dépôt des rapports de stage).
 
-from django.core.files.storage import default_storage
+Le dépôt est transactionnel : le dossier est verrouillé pendant le calcul du
+numéro de version afin que deux dépôts simultanés ne produisent jamais deux
+fois la même version.
+"""
+
+import uuid
+
 from django.core.exceptions import ValidationError
+from django.core.files.storage import default_storage
 from django.db import transaction
 
-from api.models import DocumentVersion, InternshipFolder
 from api.documents.validators import validate_pdf_file
+from api.models import DocumentVersion, InternshipFolder
 
 
 @transaction.atomic
 def upload_document(folder_id, uploaded_file):
     """
-    Dépose une nouvelle version d'un document
-    dans un dossier de stage existant.
-    """
+    Dépose une nouvelle version de document dans un dossier de stage.
 
-    # Vérifier le fichier avant de le stocker
+    Paramètres :
+        folder_id (int) : identifiant du dossier de stage cible.
+        uploaded_file (UploadedFile) : fichier PDF reçu.
+
+    Retour :
+        DocumentVersion : la version créée (numéro = dernière version + 1).
+
+    Lève :
+        ValidationError : fichier invalide ou dossier inexistant.
+    """
+    # Vérifier le fichier avant de le stocker.
     validate_pdf_file(uploaded_file)
 
-    # Verrouiller le dossier pendant la création de la version
+    # Verrouiller la ligne du dossier (SELECT … FOR UPDATE) pendant la
+    # création : un dépôt concurrent attendra la fin de cette transaction.
     try:
         folder = InternshipFolder.objects.select_for_update().get(
             pk=folder_id
@@ -29,7 +45,7 @@ def upload_document(folder_id, uploaded_file):
             "Le dossier de stage demandé n'existe pas."
         )
 
-    # Calculer le prochain numéro de version
+    # Calculer le prochain numéro de version.
     last_version = (
         DocumentVersion.objects
         .filter(folder=folder)
@@ -43,7 +59,8 @@ def upload_document(folder_id, uploaded_file):
         else 1
     )
 
-    # Générer un nom imprévisible
+    # Générer un nom de fichier imprévisible : le nom d'origine fourni par le
+    # client n'est jamais utilisé (évite collisions et traversée de chemin).
     safe_filename = f"{uuid.uuid4().hex}.pdf"
 
     storage_path = (
@@ -62,7 +79,7 @@ def upload_document(folder_id, uploaded_file):
             file_path=saved_path,
         )
     except Exception:
-        # Nettoyer le fichier si l'enregistrement échoue
+        # Nettoyer le fichier orphelin si l'enregistrement en base échoue.
         default_storage.delete(saved_path)
         raise
 

@@ -1,0 +1,11 @@
+# Normalisation des fins de ligne du dépôt.
+# Par défaut, Git choisit automatiquement (LF dans le dépôt).
+* text=auto
+
+# Les scripts exécutés dans des conteneurs Linux doivent rester en LF,
+# même sur un poste Windows (sinon « /bin/sh^M: not found » au démarrage).
+*.sh text eol=lf
+Dockerfile text eol=lf
+
+# Les scripts PowerShell restent en CRLF pour Windows.
+*.ps1 text eol=crlf

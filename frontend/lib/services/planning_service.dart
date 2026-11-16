@@ -1,33 +1,29 @@
-import 'dart:convert';
+/// Accès aux routes de planification : soutenances, salles, jurys et
+/// dossiers de stage.
+library;
 
-import 'package:http/http.dart' as http;
-
+import '../core/network/api_service.dart';
 import '../models/defense.dart';
-import 'api_service.dart';
+import '../models/planning_refs.dart';
 
-/// Centralise l’accès REST au planning et aux référentiels nécessaires.
+/// Service du planning des soutenances.
+///
+/// Le serveur reste seul juge des conflits (salle, jury, recevabilité) :
+/// une création refusée remonte sous forme d'[ApiException] (HTTP 400)
+/// dont le message est directement affichable.
 class PlanningService {
-  PlanningService({
-    required this.accessToken,
-    String? Function()? accessTokenProvider,
-    this.refreshAccessToken,
-    http.Client? client,
-  })  : _accessTokenProvider = accessTokenProvider ?? (() => accessToken),
-        _client = client ?? http.Client();
+  /// Crée le service à partir du client HTTP authentifié [api].
+  PlanningService(this.api);
 
-  final String? accessToken;
-  final String? Function() _accessTokenProvider;
-  final Future<bool> Function()? refreshAccessToken;
-  final http.Client _client;
+  /// Client HTTP authentifié partagé.
+  final ApiService api;
 
-  Uri _url(String path) {
-    final base = ApiService.baseUrl.replaceFirst(RegExp(r'/+$'), '');
-    final endpoint = path.replaceFirst(RegExp(r'^/+'), '');
-    return Uri.parse('$base/$endpoint');
-  }
-
+  /// Charge le planning complet, trié chronologiquement par le serveur.
+  ///
+  /// Lève une [FormatException] si la réponse ne contient pas la liste
+  /// `soutenances` attendue.
   Future<List<Defense>> loadDefenses() async {
-    final data = await _getObject('soutenances/planning/');
+    final data = await api.getObject('soutenances/planning/');
     final items = data['soutenances'];
     if (items is! List) {
       throw const FormatException('Le serveur a renvoyé un planning invalide.');
@@ -38,12 +34,20 @@ class PlanningService {
         .toList();
   }
 
-  Future<List<dynamic>> loadRooms() => _getList('salles/');
+  /// Liste les salles du catalogue.
+  Future<List<Map<String, dynamic>>> loadRooms() => api.getList('salles/');
 
-  Future<List<dynamic>> loadJuries() => _getList('jurys/');
+  /// Liste les jurys avec leurs membres.
+  Future<List<Map<String, dynamic>>> loadJuries() => api.getList('jurys/');
 
-  Future<List<dynamic>> loadFolders() => _getList('internship-folders/');
+  /// Liste les dossiers de stage planifiables.
+  Future<List<Map<String, dynamic>>> loadFolders() =>
+      api.getList('internship-folders/');
 
+  /// Demande la création d'une soutenance.
+  ///
+  /// Les instants [start] et [end] sont envoyés en UTC (exigence NFR04) ;
+  /// retourne la soutenance enregistrée par le serveur.
   Future<Map<String, dynamic>> createDefense({
     required int folderId,
     required int juryId,
@@ -51,100 +55,95 @@ class PlanningService {
     required DateTime start,
     required DateTime end,
   }) async {
-    final response = await _send(
-      'POST',
-      'soutenances/',
-      body: {
-        'folder': folderId,
-        'jury': juryId,
-        'room_name': roomName,
-        'slot_start': start.toUtc().toIso8601String(),
-        'slot_end': end.toUtc().toIso8601String(),
-        'status': 'planifie',
-      },
-    );
-    return _decodeObject(response);
+    final data = await api.post('soutenances/', {
+      'folder': folderId,
+      'jury': juryId,
+      'room_name': roomName,
+      'slot_start': start.toUtc().toIso8601String(),
+      'slot_end': end.toUtc().toIso8601String(),
+      'status': 'planifie',
+    });
+    return ApiService.requireObject(data);
   }
 
-  Future<List<dynamic>> _getList(String path) async {
-    final response = await _send('GET', path);
-    final data = _decode(response);
-    if (data is List) return data;
-    if (data is Map && data['results'] is List) {
-      return data['results'] as List<dynamic>;
-    }
-    throw const FormatException('Le serveur a renvoyé une liste invalide.');
+  // -------------------------------------------------------------------
+  // Catalogue des salles (CRUD, réservé au personnel)
+  // -------------------------------------------------------------------
+
+  /// Liste les salles sous forme de modèles typés, triées par nom.
+  Future<List<Room>> loadRoomRecords() async {
+    return (await loadRooms()).map(Room.fromJson).toList();
   }
 
-  Future<Map<String, dynamic>> _getObject(String path) async {
-    return _decodeObject(await _send('GET', path));
-  }
-
-  Future<http.Response> _send(
-    String method,
-    String path, {
-    Map<String, dynamic>? body,
+  /// Crée une salle ; le nom doit être unique et la capacité positive.
+  Future<Room> createRoom({
+    required String name,
+    required int capacity,
+    required bool isActive,
   }) async {
-    Future<http.Response> send(String? token) {
-      final headers = <String, String>{
-        'Accept': 'application/json',
-        if (body != null) 'Content-Type': 'application/json',
-        if (token != null) 'Authorization': 'Bearer $token',
-      };
-      if (method == 'POST') {
-        return _client.post(
-          _url(path),
-          headers: headers,
-          body: jsonEncode(body),
-        );
-      }
-      return _client.get(_url(path), headers: headers);
-    }
-
-    var response = await send(_accessTokenProvider());
-    final refresh = refreshAccessToken;
-    if (response.statusCode == 401 &&
-        refresh != null &&
-        await refresh()) {
-      response = await send(_accessTokenProvider());
-    }
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw _apiError(response);
-    }
-    return response;
+    final data = await api.post('salles/', {
+      'name': name,
+      'capacity': capacity,
+      'is_active': isActive,
+    });
+    return Room.fromJson(ApiService.requireObject(data));
   }
 
-  dynamic _decode(http.Response response) {
-    if (response.body.isEmpty) return <String, dynamic>{};
-    try {
-      return jsonDecode(response.body);
-    } on FormatException {
-      throw const FormatException('Le serveur a renvoyé un JSON invalide.');
-    }
+  /// Modifie la salle [id].
+  Future<Room> updateRoom(
+    int id, {
+    required String name,
+    required int capacity,
+    required bool isActive,
+  }) async {
+    final data = await api.patch('salles/$id/', {
+      'name': name,
+      'capacity': capacity,
+      'is_active': isActive,
+    });
+    return Room.fromJson(ApiService.requireObject(data));
   }
 
-  Map<String, dynamic> _decodeObject(http.Response response) {
-    final data = _decode(response);
-    if (data is Map<String, dynamic>) return data;
-    throw const FormatException('Le serveur a renvoyé un objet invalide.');
+  /// Supprime la salle [id].
+  Future<void> deleteRoom(int id) => api.delete('salles/$id/');
+
+  // -------------------------------------------------------------------
+  // Jurys et membres (écriture réservée au personnel)
+  // -------------------------------------------------------------------
+
+  /// Liste les jurys avec leurs membres, sous forme de modèles typés.
+  Future<List<Jury>> loadJuryRecords() async {
+    return (await loadJuries()).map(Jury.fromJson).toList();
   }
 
-  ApiException _apiError(http.Response response) {
-    var message = 'Erreur HTTP ${response.statusCode}.';
-    try {
-      final data = jsonDecode(response.body);
-      if (data is Map) {
-        final values = data.values.map((value) {
-          if (value is String) return value;
-          if (value is List) return value.join(' ');
-          return '';
-        }).where((value) => value.isNotEmpty);
-        final joined = values.join(' ');
-        if (joined.isNotEmpty) message = joined;
-      }
-    } on FormatException {
-      if (response.body.isNotEmpty) message = response.body;
-    }
-    return ApiException(message, statusCode: response.statusCode);
+  /// Crée un jury vide nommé [name].
+  Future<Jury> createJury(String name) async {
+    final data = await api.post('jurys/', {'name': name, 'is_complete': false});
+    return Jury.fromJson(ApiService.requireObject(data));
   }
+
+  /// Déclare le jury [id] complet ou incomplet.
+  Future<void> setJuryComplete(int id, {required bool isComplete}) async {
+    await api.patch('jurys/$id/', {'is_complete': isComplete});
+  }
+
+  /// Ajoute un membre au jury [juryId].
+  ///
+  /// [role] vaut `president`, `rapporteur` ou `examinateur`.
+  Future<JuryMember> addJuryMember({
+    required int juryId,
+    required String name,
+    required String role,
+  }) async {
+    final data = await api.post('jury-members/', {
+      'jury': juryId,
+      'member_name': name,
+      'role_in_jury': role,
+    });
+    return JuryMember.fromJson(ApiService.requireObject(data));
+  }
+
+  /// Retire le membre [memberId] de son jury.
+  Future<void> deleteJuryMember(int memberId) =>
+      api.delete('jury-members/$memberId/');
 }

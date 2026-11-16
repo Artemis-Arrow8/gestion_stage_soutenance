@@ -15,7 +15,7 @@ SGSUS est une application de gestion des stages et des soutenances universitaire
 
    ```powershell
    cd backend
-   pip install -r requirements.txt
+   pip install -r requirements-dev.txt
    python manage.py migrate
    python manage.py createsuperuser
    python manage.py runserver 127.0.0.1:8001
@@ -40,10 +40,11 @@ Après avoir configuré `.env`, valider et démarrer les services. Compose utili
 ```powershell
 docker compose config --quiet
 docker compose up --build -d
-docker compose exec backend python manage.py migrate --noinput
 docker compose exec backend python manage.py createsuperuser
 docker compose logs --tail 100 backend
 ```
+
+Le conteneur backend attend PostgreSQL, applique les migrations et collecte les fichiers statiques à chaque démarrage (`backend/entrypoint.sh`), puis lance Gunicorn. `http://127.0.0.1:8001/` décrit l’API et `http://127.0.0.1:8001/health/` indique l’état du service et de la base.
 
 Le backend utilise Gunicorn, tourne sous un compte non privilégié et se connecte à PostgreSQL avec le rôle `sgsus_app_user`, distinct du compte d'administration. Compose prépare ce rôle également sur un volume déjà initialisé. Pour une base déjà utilisée, sauvegarder et examiner l’état des migrations avant de les appliquer. Le guide de déploiement temporaire est dans [docs/guide-exploitation.md](docs/guide-exploitation.md).
 
@@ -71,3 +72,21 @@ flutter test
 ```
 
 `database/schema.sql` contient des commandes `DROP TABLE` : ne pas l'exécuter sur une base qui contient des données. Utiliser les migrations pour gérer le schéma.
+
+## Architecture du code
+
+**Backend (`backend/`)**
+
+| Dossier / fichier | Rôle |
+|---|---|
+| `config/settings.py` | Configuration par variables d’environnement (détection automatique de Render) |
+| `config/urls.py` | Routes racines : `/` (accueil JSON), `/admin/`, `/api/` |
+| `api/models.py` | Modèles métier (schéma historique PostgreSQL) |
+| `api/serializers/` | Sérialiseurs par domaine : `accounts`, `academic`, `planning`, `fields` |
+| `api/views/` | Vues par domaine : `auth`, `accounts`, `academic`, `planning`, `system` |
+| `api/services/` | Logique métier : `conflicts` (règles EXG01), `sante` (sonde `/health/`) |
+| `api/documents/` | Dépôt et téléchargement des rapports PDF |
+| `api/middleware.py` | Sonde de santé traitée avant le contrôle d’hôte et la redirection HTTPS |
+| `entrypoint.sh` | Démarrage du conteneur : attente BD, migrations, statiques, Gunicorn |
+
+**Frontend (`frontend/`)** : voir [frontend/README.md](frontend/README.md).

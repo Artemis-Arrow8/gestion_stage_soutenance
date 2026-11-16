@@ -1,0 +1,11 @@
+# =========================================================================
+# Dépendances de développement et de test du backend SGSUS.
+# Installation : pip install -r requirements-dev.txt
+# (inclut automatiquement les dépendances d'exécution de requirements.txt).
+# =========================================================================
+
+-r requirements.txt
+
+pytest>=8.0                                   # Lanceur de tests avancé
+pytest-django>=4.8                            # Intégration pytest / Django
+coverage>=7.0                                 # Mesure de couverture des tests

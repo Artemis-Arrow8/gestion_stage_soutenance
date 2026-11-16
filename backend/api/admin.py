@@ -1,3 +1,11 @@
+"""
+Configuration du site d'administration Django (/admin/) pour SGSUS.
+
+Seules les tables de liaison gérées par Django y sont exposées : elles
+permettent à un administrateur de rattacher un compte à une fiche étudiante,
+à un membre de jury, ou d'affecter un encadreur à un dossier.
+"""
+
 from django.contrib import admin
 
 from .models import FolderSupervisor, JuryMemberAccount, StudentAccount
@@ -8,12 +16,14 @@ class StudentAccountAdmin(admin.ModelAdmin):
     """Permet aux administrateurs d'associer les comptes aux étudiants."""
 
     list_display = ('user', 'student')
+    # Recherche par identifiant de connexion ou par données de la fiche.
     search_fields = (
         'user__username',
         'student__student_number',
         'student__full_name',
         'student__email',
     )
+    # Jointure SQL unique pour éviter une requête par ligne affichée.
     list_select_related = ('user', 'student')
 
 

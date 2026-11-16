@@ -1,199 +1,102 @@
-import 'dart:convert';
+/// Accès aux routes d'administration : campagnes, comptes, étudiants et
+/// membres de jury.
+library;
 
-import 'package:http/http.dart' as http;
-
+import '../core/network/api_service.dart';
 import '../models/administration.dart';
-import 'api_service.dart';
 
-/// Centralise les appels authentifiés des écrans d'administration.
+/// Service des écrans « Campagnes » et « Comptes ».
+///
+/// Toutes les requêtes passent par le client authentifié [ApiService]
+/// fourni par `AuthProvider` (jeton et renouvellement automatiques).
 class AdministrationService {
-  AdministrationService({
-    required this.accessToken,
-    String? Function()? accessTokenProvider,
-    this.refreshAccessToken,
-    http.Client? client,
-  }) : _accessTokenProvider = accessTokenProvider ?? (() => accessToken),
-       _client = client ?? http.Client();
+  /// Crée le service à partir du client HTTP authentifié [api].
+  AdministrationService(this.api);
 
-  final String? accessToken;
-  final String? Function() _accessTokenProvider;
-  final Future<bool> Function()? refreshAccessToken;
-  final http.Client _client;
+  /// Client HTTP authentifié partagé.
+  final ApiService api;
 
-  Uri _url(String path) {
-    final base = ApiService.baseUrl.replaceFirst(RegExp(r'/+$'), '');
-    final endpoint = path.replaceFirst(RegExp(r'^/+'), '');
-    return Uri.parse('$base/$endpoint');
-  }
-
+  /// Liste les campagnes académiques.
   Future<List<CampaignRecord>> loadCampaigns() async {
-    return (await _getList('campaigns/')).map(CampaignRecord.fromJson).toList();
+    return (await api.getList('campaigns/'))
+        .map(CampaignRecord.fromJson)
+        .toList();
   }
 
+  /// Liste les comptes utilisateurs (réservé aux administrateurs).
   Future<List<AccountRecord>> loadAccounts() async {
-    return (await _getList('accounts/')).map(AccountRecord.fromJson).toList();
+    return (await api.getList('accounts/'))
+        .map(AccountRecord.fromJson)
+        .toList();
   }
 
+  /// Liste les fiches étudiantes, pour lier un compte étudiant.
   Future<List<StudentOption>> loadStudents() async {
-    return (await _getList('students/')).map(StudentOption.fromJson).toList();
+    return (await api.getList('students/'))
+        .map(StudentOption.fromJson)
+        .toList();
   }
 
+  /// Liste les membres de jury, pour lier un compte jury.
   Future<List<JuryMemberOption>> loadJuryMembers() async {
-    return (await _getList('jury-members/'))
+    return (await api.getList('jury-members/'))
         .map(JuryMemberOption.fromJson)
         .toList();
   }
 
+  /// Crée une campagne et retourne la version enregistrée par le serveur.
   Future<CampaignRecord> createCampaign({
     required String academicYear,
     required bool isActive,
   }) async {
-    return CampaignRecord.fromJson(
-      await _sendObject(
-        'POST',
-        'campaigns/',
-        body: {'academic_year': academicYear, 'is_active': isActive},
-      ),
-    );
+    final data = await api.post('campaigns/', {
+      'academic_year': academicYear,
+      'is_active': isActive,
+    });
+    return CampaignRecord.fromJson(ApiService.requireObject(data));
   }
 
+  /// Modifie la campagne [id] et retourne sa nouvelle version.
   Future<CampaignRecord> updateCampaign(
     int id, {
     required String academicYear,
     required bool isActive,
   }) async {
-    return CampaignRecord.fromJson(
-      await _sendObject(
-        'PATCH',
-        'campaigns/$id/',
-        body: {'academic_year': academicYear, 'is_active': isActive},
-      ),
-    );
+    final data = await api.patch('campaigns/$id/', {
+      'academic_year': academicYear,
+      'is_active': isActive,
+    });
+    return CampaignRecord.fromJson(ApiService.requireObject(data));
   }
 
+  /// Crée un compte à partir des champs saisis ([account]).
+  ///
+  /// Le serveur valide le rôle, la liaison étudiant/jury et le mot de passe.
   Future<AccountRecord> createAccount(Map<String, dynamic> account) async {
-    return AccountRecord.fromJson(
-      await _sendObject('POST', 'accounts/', body: account),
-    );
+    final data = await api.post('accounts/', account);
+    return AccountRecord.fromJson(ApiService.requireObject(data));
   }
 
+  /// Applique les modifications [changes] au compte [id].
   Future<AccountRecord> updateAccount(
     int id,
     Map<String, dynamic> changes,
   ) async {
-    return AccountRecord.fromJson(
-      await _sendObject('PATCH', 'accounts/$id/', body: changes),
-    );
+    final data = await api.patch('accounts/$id/', changes);
+    return AccountRecord.fromJson(ApiService.requireObject(data));
   }
 
+  /// Crée une fiche étudiante.
   Future<StudentOption> createStudent({
     required String studentNumber,
     required String fullName,
     required String email,
   }) async {
-    return StudentOption.fromJson(
-      await _sendObject(
-        'POST',
-        'students/',
-        body: {
-          'student_number': studentNumber,
-          'full_name': fullName,
-          'email': email,
-        },
-      ),
-    );
-  }
-
-  Future<List<Map<String, dynamic>>> _getList(String path) async {
-    final data = _decode(await _send('GET', path));
-    final items = data is List
-        ? data
-        : data is Map && data['results'] is List
-        ? data['results'] as List
-        : null;
-    if (items == null) {
-      throw const FormatException('Le serveur a renvoyé une liste invalide.');
-    }
-    return items
-        .whereType<Map>()
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList();
-  }
-
-  Future<Map<String, dynamic>> _sendObject(
-    String method,
-    String path, {
-    Map<String, dynamic>? body,
-  }) async {
-    final data = _decode(await _send(method, path, body: body));
-    if (data is Map<String, dynamic>) return data;
-    throw const FormatException('Le serveur a renvoyé un objet invalide.');
-  }
-
-  Future<http.Response> _send(
-    String method,
-    String path, {
-    Map<String, dynamic>? body,
-  }) async {
-    Future<http.Response> send(String? token) {
-      final headers = <String, String>{
-        'Accept': 'application/json',
-        if (body != null) 'Content-Type': 'application/json',
-        if (token != null) 'Authorization': 'Bearer $token',
-      };
-      final uri = _url(path);
-      final encodedBody = body == null ? null : jsonEncode(body);
-      return switch (method) {
-        'GET' => _client.get(uri, headers: headers),
-        'POST' => _client.post(uri, headers: headers, body: encodedBody),
-        'PATCH' => _client.patch(uri, headers: headers, body: encodedBody),
-        _ => throw ArgumentError.value(method, 'method', 'Méthode non gérée.'),
-      };
-    }
-
-    late http.Response response;
-    try {
-      response = await send(_accessTokenProvider());
-      final refresh = refreshAccessToken;
-      if (response.statusCode == 401 && refresh != null && await refresh()) {
-        response = await send(_accessTokenProvider());
-      }
-    } on http.ClientException catch (error) {
-      throw ApiException(
-        'Impossible de joindre le serveur API : ${error.message}',
-      );
-    }
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw _apiError(response);
-    }
-    return response;
-  }
-
-  dynamic _decode(http.Response response) {
-    if (response.body.isEmpty) return <String, dynamic>{};
-    try {
-      return jsonDecode(response.body);
-    } on FormatException {
-      throw const FormatException('Le serveur a renvoyé un JSON invalide.');
-    }
-  }
-
-  ApiException _apiError(http.Response response) {
-    var message = 'Erreur HTTP ${response.statusCode}.';
-    try {
-      final body = jsonDecode(response.body);
-      if (body is Map) {
-        final messages = body.values
-            .expand((value) => value is List ? value : [value])
-            .whereType<String>()
-            .where((value) => value.isNotEmpty)
-            .toList();
-        if (messages.isNotEmpty) message = messages.join(' ');
-      }
-    } on FormatException {
-      if (response.body.isNotEmpty) message = response.body;
-    }
-    return ApiException(message, statusCode: response.statusCode);
+    final data = await api.post('students/', {
+      'student_number': studentNumber,
+      'full_name': fullName,
+      'email': email,
+    });
+    return StudentOption.fromJson(ApiService.requireObject(data));
   }
 }
