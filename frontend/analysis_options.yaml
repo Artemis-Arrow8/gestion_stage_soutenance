@@ -16,14 +16,6 @@ analyzer:
     - macos/**
     - linux/**
 
-  # Configuration de la sévérité des erreurs et des avertissements.
-  # Permet d'éviter que des avertissements de dépréciation (comme ceux rencontrés dans la CI) 
-  # ne provoquent l'échec bloquant de la compilation ou des tests automatiques.
-  errors:
-    # Traite les utilisations de membres dépréciés comme de simples avertissements (ou 'ignore' si besoin)
-    # au lieu de bloquer l'analyse de manière critique.
-    deprecated_member_use: warning
-
 linter:
   # Les règles de linter appliquées à ce projet peuvent être personnalisées dans 
   # la section ci-dessous pour désactiver ou activer des règles spécifiques[cite: 6].

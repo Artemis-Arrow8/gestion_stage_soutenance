@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import '../models/defense.dart';
 import '../services/conflict_report.dart';
 import '../services/planning_store.dart';
