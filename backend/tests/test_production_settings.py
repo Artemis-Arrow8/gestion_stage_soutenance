@@ -18,6 +18,7 @@ class ProductionSettingsTests(unittest.TestCase):
         secure_ssl_redirect="True",
         secure_cookies="True",
         command="import config.settings",
+        database_url=None,
     ):
         environment = os.environ.copy()
         environment.update(
@@ -32,6 +33,7 @@ class ProductionSettingsTests(unittest.TestCase):
                     "synthetic-test-app-password-with-at-least-thirty-two-characters"
                 ),
                 "DB_ADMIN_USER": db_admin_user,
+                "DATABASE_URL": database_url or "",
                 "DJANGO_SECURE_SSL_REDIRECT": secure_ssl_redirect,
                 "DJANGO_SECURE_COOKIES": secure_cookies,
             }
@@ -86,6 +88,38 @@ class ProductionSettingsTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "sgsus_app_user")
+
+    def test_production_reads_render_database_url_with_tls(self):
+        result = self._import_settings(
+            "sgsus.example.test",
+            command=(
+                "from config.settings import DATABASES; "
+                "db = DATABASES['default']; "
+                "print('|'.join(str(db[key]) for key in "
+                "('USER', 'HOST', 'PORT', 'NAME')) + "
+                "'|' + db['OPTIONS']['sslmode'])"
+            ),
+            database_url=(
+                "postgresql://render_user:"
+                "synthetic-render-password-with-more-than-thirty-two-characters"
+                "@db.example.test:5432/sgsus"
+            ),
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.strip(),
+            "render_user|db.example.test|5432|sgsus|require",
+        )
+
+    def test_production_rejects_non_postgresql_database_url(self):
+        result = self._import_settings(
+            "sgsus.example.test",
+            database_url="mysql://render_user:synthetic-password@db.example.test/sgsus",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("DATABASE_URL", result.stderr)
 
     def test_production_rejects_the_administrator_database_role(self):
         result = self._import_settings(

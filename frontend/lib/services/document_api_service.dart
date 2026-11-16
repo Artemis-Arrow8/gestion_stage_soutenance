@@ -6,23 +6,26 @@ import 'package:http/http.dart' as http;
 import '../models/document_version_model.dart';
 
 class DocumentApiService {
-  DocumentApiService({http.Client? client})
-      : _client = client ?? http.Client();
+  DocumentApiService({http.Client? client}) : _client = client ?? http.Client();
 
+  /// Partage l’URL de l’API avec l’authentification et les autres services.
+  /// La valeur de production est injectée avec `--dart-define=API_BASE_URL=...`.
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://127.0.0.1:8000/api',
+    defaultValue: 'http://127.0.0.1:8001/api',
   );
 
+  /// Client injectable pour tester les transferts sans accéder au réseau.
   final http.Client _client;
 
+  /// Ajoute l’authentification Bearer et demande une réponse JSON.
   Map<String, String> _headers(String token) => {
-        'Accept': 'application/json',
-        'Authorization': 'Bearer $token',
-      };
+    'Accept': 'application/json',
+    'Authorization': 'Bearer $token',
+  };
 
-  String get _base =>
-      baseUrl.replaceFirst(RegExp(r'/+$'), '');
+  /// Normalise l’URL de base pour éviter les doubles séparateurs.
+  String get _base => baseUrl.replaceFirst(RegExp(r'/+$'), '');
 
   /// Récupère les versions accessibles via le ViewSet DRF.
   Future<List<DocumentVersion>> getDocuments({
@@ -30,21 +33,17 @@ class DocumentApiService {
   }) async {
     final uri = Uri.parse('$_base/document-versions/');
 
-    final response = await _client.get(
-      uri,
-      headers: _headers(accessToken),
-    );
+    final response = await _client.get(uri, headers: _headers(accessToken));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
 
-      final List<dynamic> items =
-          data is List ? data : data['results'] as List<dynamic>;
+      final List<dynamic> items = data is List
+          ? data
+          : data['results'] as List<dynamic>;
 
       return items
-          .map((item) => DocumentVersion.fromJson(
-                item as Map<String, dynamic>,
-              ))
+          .map((item) => DocumentVersion.fromJson(item as Map<String, dynamic>))
           .toList();
     }
 
@@ -64,9 +63,7 @@ class DocumentApiService {
     request.headers.addAll(_headers(accessToken));
     request.fields['folder_id'] = folderId.toString();
 
-    request.files.add(
-      await http.MultipartFile.fromPath('file', filePath),
-    );
+    request.files.add(await http.MultipartFile.fromPath('file', filePath));
 
     final streamedResponse = await _client.send(request);
     final response = await http.Response.fromStream(streamedResponse);
@@ -85,14 +82,9 @@ class DocumentApiService {
     required int documentId,
     required String accessToken,
   }) async {
-    final uri = Uri.parse(
-      '$_base/documents/download/$documentId/',
-    );
+    final uri = Uri.parse('$_base/documents/download/$documentId/');
 
-    final response = await _client.get(
-      uri,
-      headers: _headers(accessToken),
-    );
+    final response = await _client.get(uri, headers: _headers(accessToken));
 
     if (response.statusCode == 200) {
       return response.bodyBytes;

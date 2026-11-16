@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 from datetime import timedelta
 from pathlib import Path
 import os
+from urllib.parse import parse_qs, unquote, urlparse
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
@@ -88,8 +89,9 @@ if not DEBUG and "*" in ALLOWED_HOSTS:
     raise ImproperlyConfigured(
         "DJANGO_ALLOWED_HOSTS ne peut pas contenir '*' en production."
     )
-# Application definition
 
+
+# Application definition
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -101,7 +103,6 @@ INSTALLED_APPS = [
     'rest_framework',  
     'rest_framework_simplejwt.token_blacklist',
     'api',
-    
 ]
 
 MIDDLEWARE = [
@@ -121,6 +122,7 @@ MIDDLEWARE = [
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
 ] if DEBUG else []
+
 # DJANGO_CORS_ALLOWED_ORIGINS contient les origines exactes du frontend,
 # séparées par des virgules (par exemple https://app.exemple.org).
 CORS_ALLOWED_ORIGINS = [
@@ -140,6 +142,7 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = _env_bool(
 SECURE_HSTS_PRELOAD = _env_bool("DJANGO_SECURE_HSTS_PRELOAD", False)
 SESSION_COOKIE_SECURE = SECURE_COOKIES
 CSRF_COOKIE_SECURE = SECURE_COOKIES
+
 if not DEBUG and not SECURE_SSL_REDIRECT:
     raise ImproperlyConfigured(
         "DJANGO_SECURE_SSL_REDIRECT doit être activé en production."
@@ -148,6 +151,7 @@ if not DEBUG and not SECURE_COOKIES:
     raise ImproperlyConfigured(
         "DJANGO_SECURE_COOKIES doit être activé en production."
     )
+
 # DJANGO_BEHIND_HTTPS_PROXY n'est activé que si le proxy maîtrisé écrase
 # réellement l'en-tête X-Forwarded-Proto reçu du client.
 SECURE_PROXY_SSL_HEADER = (
@@ -178,34 +182,69 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
-# DB_USER et DB_PASSWORD identifient le rôle applicatif ; les identifiants
-# administrateur restent réservés aux services PostgreSQL de Compose.
-DB_USER = os.getenv("DB_USER", "").strip()
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-if DEBUG:
-    # Compatibilité avec les installations locales historiques hors Compose.
-    DB_USER = DB_USER or os.getenv("POSTGRES_USER", "gestion_user")
-    DB_PASSWORD = DB_PASSWORD or os.getenv("POSTGRES_PASSWORD", "")
+# Render fournit DATABASE_URL ; Compose conserve ses variables DB_* séparées.
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+if DATABASE_URL:
+    try:
+        database_url = urlparse(DATABASE_URL)
+        database_port = database_url.port or 5432
+    except ValueError as error:
+        raise ImproperlyConfigured("DATABASE_URL est invalide.") from error
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv(
-            "POSTGRES_DB",
-            "gestion_stage_soutenance"
-        ),
-        "USER": DB_USER,
-        "PASSWORD": DB_PASSWORD,
-        "HOST": os.getenv(
-            "DB_HOST",
-            "localhost"
-        ),
-        "PORT": os.getenv(
-            "DB_PORT",
-            "5432"
-        ),
+    if (
+        database_url.scheme not in {"postgres", "postgresql"}
+        or not database_url.hostname
+        or not database_url.username
+        or database_url.password is None
+        or not database_url.path.strip("/")
+    ):
+        raise ImproperlyConfigured(
+            "DATABASE_URL doit être une URL PostgreSQL complète."
+        )
+
+    DB_USER = unquote(database_url.username).strip()
+    DB_PASSWORD = unquote(database_url.password)
+    database_query = parse_qs(database_url.query)
+    sslmode = database_query.get("sslmode", ["require"])[-1]
+    
+    if not DEBUG and sslmode == "disable":
+        raise ImproperlyConfigured(
+            "DATABASE_URL doit utiliser TLS en production."
+        )
+
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": unquote(database_url.path.lstrip("/")),
+            "USER": DB_USER,
+            "PASSWORD": DB_PASSWORD,
+            "HOST": database_url.hostname,
+            "PORT": database_port,
+            "CONN_MAX_AGE": 600,
+            "CONN_HEALTH_CHECKS": True,
+            "OPTIONS": {"sslmode": sslmode},
+        }
     }
-}
+else:
+    # Compatibilité locale : Compose transmet un rôle applicatif dédié.
+    DB_USER = os.getenv("DB_USER", "").strip()
+    DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+    if DEBUG:
+        # Compatibilité avec les installations locales historiques hors Compose.
+        DB_USER = DB_USER or os.getenv("POSTGRES_USER", "gestion_user")
+        DB_PASSWORD = DB_PASSWORD or os.getenv("POSTGRES_PASSWORD", "")
+
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.getenv("POSTGRES_DB", "gestion_stage_soutenance"),
+            "USER": DB_USER,
+            "PASSWORD": DB_PASSWORD,
+            "HOST": os.getenv("DB_HOST", "localhost"),
+            "PORT": os.getenv("DB_PORT", "5432"),
+        }
+    }
+
 if not DEBUG and (
     len(DATABASES["default"]["PASSWORD"]) < 32
     or DATABASES["default"]["PASSWORD"].startswith(("replace-with-", "dev-only-"))
@@ -221,9 +260,9 @@ if not DEBUG and (
         "DB_USER doit être distinct du compte administrateur PostgreSQL."
     )
 
+
 # Password validation
 # https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
-
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
@@ -242,14 +281,11 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Internationalization
 # https://docs.djangoproject.com/en/6.1/topics/i18n/
-
 LANGUAGE_CODE = 'en-us'
-
 TIME_ZONE = 'UTC'
-
 USE_I18N = True
-
 USE_TZ = True
+
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -283,19 +319,17 @@ SIMPLE_JWT = {
 # dans la base de test après les migrations.
 TEST_RUNNER = 'config.test_runner.SchemaTestRunner'
 
+
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
-
-# Les fichiers statiques sont collectés dans l'image Docker ; le stockage des
-# documents déposés reste dans MEDIA_ROOT, idéalement monté sur un volume durable.
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL = '/media/'
-# DJANGO_MEDIA_ROOT permet de placer les documents hors du système de fichiers
-# éphémère du conteneur (Compose utilise /app/media).
+
 MEDIA_ROOT = Path(
     os.getenv('DJANGO_MEDIA_ROOT', '').strip() or str(BASE_DIR / 'media')
 )
+
 STORAGES = {
     'default': {
         'BACKEND': 'django.core.files.storage.FileSystemStorage',
@@ -306,9 +340,7 @@ STORAGES = {
 }
 
 
-# Les variables DJANGO_EMAIL_* configurent le relais de courriels. Le backend
-# console reste la valeur de développement ; en production, un relais SMTP doit
-# être fourni et TLS/SSL ne peuvent pas être activés simultanément.
+# Emails
 EMAIL_BACKEND = os.getenv(
     'DJANGO_EMAIL_BACKEND',
     'django.core.mail.backends.console.EmailBackend',

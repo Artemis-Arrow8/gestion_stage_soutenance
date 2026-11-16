@@ -29,6 +29,7 @@ backups/
 build/
 .flutter-plugins
 .flutter-plugins-dependencies
+backup_docker.sql
 
 # IDE
 .vscode/

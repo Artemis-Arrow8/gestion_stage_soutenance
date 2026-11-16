@@ -18,7 +18,7 @@ SGSUS est une application de gestion des stages et des soutenances universitaire
    pip install -r requirements.txt
    python manage.py migrate
    python manage.py createsuperuser
-   python manage.py runserver 127.0.0.1:8000
+   python manage.py runserver 127.0.0.1:8001
    ```
 
 3. Dans un autre terminal, lancer Flutter :
@@ -29,7 +29,7 @@ SGSUS est une application de gestion des stages et des soutenances universitaire
    flutter run -d windows
    ```
 
-   L'adresse API par défaut est `http://127.0.0.1:8000/api`. Elle peut être remplacée avec `--dart-define=API_BASE_URL=<URL>`. Pour Flutter Web, l'API doit autoriser l'origine locale par CORS.
+   L'adresse API locale par défaut est `http://127.0.0.1:8001/api`. Pour utiliser Render, remplacer cette valeur au lancement avec `--dart-define=API_BASE_URL=https://NOM-DU-WEB-SERVICE.onrender.com/api`. Ne jamais mettre `DATABASE_URL` dans Flutter : cette variable est réservée à Django. Pour Flutter Web, autoriser l'origine exacte de l'application par CORS.
 
 ## Docker Compose
 

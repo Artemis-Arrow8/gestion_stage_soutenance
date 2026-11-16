@@ -13,53 +13,61 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
-/// Centralise les appels JSON et la traduction des erreurs Django REST.
+/// Centralise les appels JSON, la gestion des tokens et la traduction des erreurs Django REST.
 class ApiService {
   ApiService({http.Client? client}) : _client = client ?? http.Client();
 
+  /// URL publique de l’API, remplaçable au lancement avec `--dart-define`.
+  ///
+  /// Le port 8001 correspond au port local publié par Docker Compose.
+  /// En production, fournir l’URL HTTPS du Web Service Render terminée par `/api`.
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://127.0.0.1:8000/api',
+    defaultValue: 'http://127.0.0.1:8001/api',
   );
 
+  /// Client injectable pour permettre des tests HTTP sans réseau réel.
   final http.Client _client;
 
-  /// Envoie une requête POST JSON à l’API.
-  Future<Map<String, dynamic>> post(
+  /// Envoie un objet JSON à une route POST et retourne sa réponse décodée.
+  Future<dynamic> post(
     String endpoint,
     Map<String, dynamic> data, {
     String? accessToken,
-  }) {
+  }) async {
     return _request('POST', endpoint, data: data, accessToken: accessToken);
   }
 
-  /// Envoie une requête GET authentifiée ou publique à l’API.
-  Future<Map<String, dynamic>> get(String endpoint, {String? accessToken}) {
+  /// Envoie une requête GET, avec un jeton Bearer si la route est protégée.
+  Future<dynamic> get(String endpoint, {String? accessToken}) async {
     return _request('GET', endpoint, accessToken: accessToken);
   }
 
-  /// Envoie une requête PATCH JSON à l’API.
-  Future<Map<String, dynamic>> patch(
+  /// Envoie un objet JSON à une route PATCH pour modifier une partie d’une ressource.
+  Future<dynamic> postPatch(
     String endpoint,
     Map<String, dynamic> data, {
     String? accessToken,
-  }) {
+  }) async {
     return _request('PATCH', endpoint, data: data, accessToken: accessToken);
   }
 
-  /// Exécute une requête HTTP, décode sa réponse et conserve les erreurs API.
-  Future<Map<String, dynamic>> _request(
+  /// Exécute une requête HTTP, décode sa réponse (Map ou List) et gère les erreurs API.
+  Future<dynamic> _request(
     String method,
     String endpoint, {
     Map<String, dynamic>? data,
     String? accessToken,
   }) async {
+    // Supprime les séparateurs en trop pour éviter une URL avec `//`.
     final normalizedBase = baseUrl.replaceFirst(RegExp(r'/+$'), '');
     final normalizedEndpoint = endpoint.replaceFirst(RegExp(r'^/+'), '');
     final request = http.Request(
       method,
       Uri.parse('$normalizedBase/$normalizedEndpoint'),
     );
+
+    // Accepte uniquement du JSON et ajoute le jeton JWT sur les routes privées.
     request.headers['Accept'] = 'application/json';
     if (data != null) {
       request.headers['Content-Type'] = 'application/json';
@@ -78,6 +86,7 @@ class ApiService {
       );
     }
 
+    // Les réponses de l’API peuvent être vides, des objets ou des listes JSON.
     dynamic responseBody;
     if (response.body.isNotEmpty) {
       try {
@@ -95,11 +104,12 @@ class ApiService {
       }
     }
 
+    // Retourne le corps décodé pour tous les codes HTTP de succès.
     if (response.statusCode >= 200 && response.statusCode < 300) {
       if (responseBody == null) {
         return <String, dynamic>{};
       }
-      if (responseBody is Map<String, dynamic>) {
+      if (responseBody is Map<String, dynamic> || responseBody is List) {
         return responseBody;
       }
       throw const FormatException(
@@ -107,13 +117,14 @@ class ApiService {
       );
     }
 
+    // Traduit les erreurs JSON de Django REST en message exploitable par l’interface.
     throw ApiException(
       _errorMessage(responseBody, response.statusCode),
       statusCode: response.statusCode,
     );
   }
 
-  /// Extrait un message lisible des réponses d’erreur DRF et SimpleJWT.
+  /// Extrait un message lisible des réponses d’erreur de Django REST Framework (DRF) et SimpleJWT.
   String _errorMessage(dynamic body, int statusCode) {
     if (body is Map<String, dynamic>) {
       for (final key in const ['error', 'detail', 'non_field_errors']) {
@@ -141,7 +152,7 @@ class ApiService {
     return 'Le serveur a répondu avec le code HTTP $statusCode.';
   }
 
-  /// Aplati les listes et objets de validation renvoyés par Django REST.
+  /// Aplatit récursivement les listes et objets de validation renvoyés par Django.
   String _flattenError(dynamic value) {
     if (value is String) {
       return value;
