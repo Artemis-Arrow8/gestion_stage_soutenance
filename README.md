@@ -89,4 +89,33 @@ flutter test
 | `api/middleware.py` | Sonde de santé traitée avant le contrôle d’hôte et la redirection HTTPS |
 | `entrypoint.sh` | Démarrage du conteneur : attente BD, migrations, statiques, Gunicorn |
 
-**Frontend (`frontend/`)** : voir [frontend/README.md](frontend/README.md).
+**Frontend (`frontend/`)**
+
+```
+frontend/lib/
+├── main.dart          Point d’entrée
+├── app.dart           Racine : fournisseurs, thème, aiguillage de session
+├── core/              Config (URL de l’API), client HTTP unique, stockage des jetons, thème, dates
+├── models/            Modèles typés (soutenance, salle, jury, évaluation, comptes…)
+├── services/          Accès aux routes de l’API (un service par domaine)
+├── providers/         État partagé (session, planning)
+├── screens/           Écrans (connexion, tableau de bord, planning, évaluations, profil…)
+└── widgets/           Composants réutilisables (coque de navigation, ui_kit, cartes)
+```
+
+Un seul client HTTP (`ApiService`, fourni par `AuthProvider.api`) injecte le jeton et le renouvelle automatiquement ; les écrans n’appellent jamais `http` directement. Charte graphique **noir, blanc et or** dans `lib/core/theme/app_theme.dart`.
+
+## Modules de l'application
+
+| Module | Rôles | Contenu |
+|---|---|---|
+| Tableau de bord | tous | Indicateurs, prochaines soutenances, charge de la semaine ; pour l'étudiant : son dossier et sa soutenance |
+| Campagnes | admin, responsable | Années académiques, campagne active |
+| Comptes | admin | Comptes, rôles, liaison aux fiches étudiant / jury |
+| Planning | admin, responsable, jury | Calendrier jour / semaine / mois, création, statut et suppression des soutenances |
+| Salles | admin, responsable | Catalogue des salles, occupation du jour |
+| Jurys | admin, responsable | Composition des jurys, membres |
+| Conflits | admin, responsable | Doubles réservations de salle ou de jury |
+| Évaluations | admin, responsable | Notes du rapport et de l'oral, moyenne automatique, validation |
+| Documents | tous sauf jury | Dossiers de stage (création par l'étudiant, statut par le personnel), versions PDF, avis |
+| Mon profil | tous | Informations personnelles, soutenance et note (étudiant), changement de mot de passe |

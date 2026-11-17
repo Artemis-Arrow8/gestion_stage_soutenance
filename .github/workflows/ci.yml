@@ -1,4 +1,4 @@
-﻿name: CI - Gestion des stages et soutenances
+name: CI - Gestion des stages et soutenances
 
 on:
   push:
@@ -64,10 +64,14 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
 
+      # requirements-dev.txt inclut requirements.txt ET les outils de test
+      # (pytest…) importés par certains fichiers de tests.
       - name: Installer les dépendances
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-dev.txt
 
       - name: Vérifier la configuration Django
         env:

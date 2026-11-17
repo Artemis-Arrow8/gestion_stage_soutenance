@@ -1,27 +1,26 @@
 # =========================================================================
-# Dépendances d'exécution du backend SGSUS (image Docker / Render).
+# Dépendances d'exécution du backend SGSUS (image Docker / Render / CI).
 #
-# Politique de versions : pas de version figée (==), mais une borne basse
-# (version testée) et une borne haute sur la version majeure suivante, afin
-# de recevoir les correctifs sans risquer une rupture de compatibilité.
+# Politique de versions : versions EXACTES (==), validées par la CI.
+# Ainsi, Mon PC, GitHub Actions et Render installent exactement les mêmes
 #
 # Outils de test et de développement : voir requirements-dev.txt.
 # =========================================================================
 
 # --- Framework web --------------------------------------------------------
-Django>=6.0,<7.0                              # Framework web principal
+Django==6.1.3                                 # Framework web principal
 
 # --- API REST & authentification ------------------------------------------
-djangorestframework>=3.16,<4.0                # Boîte à outils des API REST
-djangorestframework-simplejwt>=5.5,<6.0       # Authentification par JWT (+ liste noire)
-django-cors-headers>=4.4,<5.0                 # En-têtes CORS pour Flutter Web
+djangorestframework==3.18.3                   # Boîte à outils des API REST
+djangorestframework-simplejwt==5.5.1          # Authentification par JWT (+ liste noire)
+django-cors-headers==4.9.0                    # En-têtes CORS pour Flutter Web
 
 # --- Production & serveur web -----------------------------------------------
-gunicorn>=23.0                                # Serveur WSGI de production
-whitenoise>=6.6,<7.0                          # Fichiers statiques servis par Django
+gunicorn==27.0.1                              # Serveur WSGI de production
+whitenoise==6.12.0                            # Fichiers statiques servis par Django
 
 # --- Base de données ----------------------------------------------------------
-psycopg2-binary>=2.9.10,<3.0                  # Pilote PostgreSQL (libpq incluse)
+psycopg2-binary==2.9.13                       # Pilote PostgreSQL (libpq incluse)
 
 # --- Configuration -------------------------------------------------------------
-python-dotenv>=1.0,<2.0                       # Chargement du fichier .env en local
+python-dotenv==1.2.4                          # Chargement du fichier .env en local
