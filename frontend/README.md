@@ -19,6 +19,24 @@ terminer par `/api`. En Web, l’origine de l’application doit figurer dans
 `DJANGO_CORS_ALLOWED_ORIGINS` côté backend (en mode `DEBUG`, `localhost` est
 autorisé automatiquement, quel que soit le port).
 
+## Modules de l'application
+
+| Module | Rôles | Contenu |
+|---|---|---|
+| Tableau de bord | tous | Indicateurs, prochaines soutenances, charge de la semaine ; pour l'étudiant : son dossier et sa soutenance |
+| Campagnes | admin, responsable | Années académiques, campagne active |
+| Comptes | admin | Comptes, rôles, liaison aux fiches étudiant / jury |
+| Planning | admin, responsable, jury | Calendrier jour / semaine / mois, création, statut et suppression des soutenances |
+| Salles | admin, responsable | Catalogue des salles, occupation du jour |
+| Jurys | admin, responsable | Composition des jurys, membres |
+| Conflits | admin, responsable | Doubles réservations de salle ou de jury |
+| Évaluations | admin, responsable | Notes du rapport et de l'oral, moyenne automatique, validation |
+| Documents | tous sauf jury | Dossiers de stage (création par l'étudiant, statut par le personnel), versions PDF, avis |
+| Mon profil | tous | Informations personnelles, soutenance et note (étudiant), changement de mot de passe |
+
+Charte graphique : **noir, blanc et or** (couleurs de l'université), définie
+dans `lib/core/theme/app_theme.dart`.
+
 ## Architecture
 
 ```

@@ -110,7 +110,7 @@ class DefenseTile extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           trailing ??
-              SgBadge(defense.status, tone: sgToneForStatus(defense.status)),
+              SgStatusBadge(defense.status),
         ],
       ),
     );

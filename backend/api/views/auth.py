@@ -5,23 +5,62 @@ Le client Flutter s'authentifie par JWT (SimpleJWT) :
     1. POST /api/login/        -> jetons `access` + `refresh` et profil ;
     2. GET  /api/profile/      -> profil du compte porteur du jeton ;
     3. POST /api/token/refresh/ -> renouvellement (vue fournie par SimpleJWT) ;
-    4. POST /api/logout/       -> mise en liste noire du jeton `refresh`.
+    4. POST /api/logout/       -> mise en liste noire du jeton `refresh` ;
+    5. POST /api/profile/password/ -> changement de son propre mot de passe.
 
 Les réponses d'erreur utilisent la clé `error`, que le client Flutter sait
 extraire pour afficher un message lisible.
 """
 
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, password_validation
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from api.models import InternshipFolder
+from api.models import Assessment, Defense, InternshipFolder
 from api.roles import get_user_role
 
 from .helpers import etudiant_du_compte
+
+
+def _soutenance_du_dossier(folder):
+    """
+    Résume la soutenance d'un dossier pour l'espace étudiant.
+
+    Paramètres :
+        folder (InternshipFolder) : dossier de l'étudiant.
+
+    Retour :
+        dict | None : créneau (ISO 8601), salle, jury et statut de la
+        soutenance la plus récente, avec la note finale si elle a été
+        validée ; None si aucune soutenance n'est planifiée.
+    """
+    defense = (
+        Defense.objects.select_related('jury')
+        .filter(folder=folder)
+        .order_by('-slot_range')
+        .first()
+    )
+    if defense is None:
+        return None
+    slot = defense.slot_range
+    resume = {
+        'id': defense.pk,
+        'slot_start': slot.lower.isoformat() if slot and slot.lower else None,
+        'slot_end': slot.upper.isoformat() if slot and slot.upper else None,
+        'room_name': defense.room_name,
+        'jury_name': defense.jury.name if defense.jury else None,
+        'status': defense.status,
+        'final_average': None,
+    }
+    # La note n'est communiquée à l'étudiant qu'une fois validée.
+    evaluation = Assessment.objects.filter(defense=defense, is_approved=True).first()
+    if evaluation is not None and evaluation.final_average is not None:
+        resume['final_average'] = str(evaluation.final_average)
+    return resume
 
 
 def construire_profil(user, role=None):
@@ -77,6 +116,10 @@ def construire_profil(user, role=None):
         'email': student.email,
         'folder_id': folder.pk if folder else None,
         'folder_status': folder.status if folder else None,
+        # Informations du dossier et de la soutenance, pour le tableau de bord.
+        'folder_company': folder.company_name if folder else None,
+        'folder_subject': folder.subject if folder else None,
+        'defense': _soutenance_du_dossier(folder) if folder else None,
     })
     return profile
 
@@ -203,3 +246,57 @@ class LogoutView(APIView):
             {'message': 'Déconnexion réussie.'},
             status=status.HTTP_200_OK,
         )
+
+
+class ChangePasswordView(APIView):
+    """
+    Permet à l'utilisateur connecté de changer son propre mot de passe.
+
+    Route : POST /api/profile/password/  (JWT obligatoire).
+    Corps attendu : {"old_password": str, "new_password": str}.
+    Réponses :
+        200 : mot de passe modifié ;
+        400 : champs manquants, ancien mot de passe incorrect, ou nouveau
+              mot de passe refusé par les règles de sécurité de Django.
+    La session en cours reste valide : les jetons JWT ne dépendent pas du
+    mot de passe.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        """Vérifie l'ancien mot de passe, valide le nouveau puis l'enregistre."""
+        ancien = request.data.get('old_password')
+        nouveau = request.data.get('new_password')
+        if not isinstance(ancien, str) or not isinstance(nouveau, str) or not nouveau:
+            return Response(
+                {'error': 'Indiquez votre mot de passe actuel et le nouveau.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = request.user
+        # L'ancien mot de passe prouve que c'est bien le titulaire du compte.
+        if not user.check_password(ancien):
+            return Response(
+                {'error': 'Le mot de passe actuel est incorrect.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if ancien == nouveau:
+            return Response(
+                {'error': 'Le nouveau mot de passe doit être différent de l’actuel.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Règles de sécurité configurées (longueur, mots courants, etc.).
+        try:
+            password_validation.validate_password(nouveau, user=user)
+        except DjangoValidationError as error:
+            return Response(
+                {'error': ' '.join(error.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # `set_password` hache le mot de passe avant l'enregistrement.
+        user.set_password(nouveau)
+        user.save(update_fields=['password'])
+        return Response({'message': 'Mot de passe modifié avec succès.'})

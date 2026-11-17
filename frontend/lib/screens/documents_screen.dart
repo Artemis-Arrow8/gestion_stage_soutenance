@@ -28,20 +28,10 @@ String _fmtDate(String? raw) {
   return p.length == 3 ? '${p[2]}/${p[1]}/${p[0]}' : raw.substring(0, 10);
 }
 
-/// Regroupe les statuts techniques d'un dossier en trois libellés lisibles.
-String _labelStatut(String? s) {
-  final v = (s ?? '').toLowerCase();
-  if (v.contains('valid') || v.contains('recevable')) return 'Validé';
-  if (v.contains('rejet') || v.contains('refus')) return 'Rejeté';
-  return 'En attente';
-}
-
-/// Tonalité associée au libellé de statut.
-SgTone _toneStatut(String? s) => switch (_labelStatut(s)) {
-  'Validé' => SgTone.success,
-  'Rejeté' => SgTone.danger,
-  _ => SgTone.warning,
-};
+/// Statuts d'un dossier de stage, dans l'ordre de leur cycle de vie.
+///
+/// `brouillon` → `soumis` → `recevable` (planifiable) ou `rejete`.
+const _statutsDossier = ['brouillon', 'soumis', 'recevable', 'rejete'];
 
 /// Message lisible d'une erreur quelconque.
 String _message(Object e) => switch (e) {
@@ -64,6 +54,12 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   late final DocumentService _service;
   late final bool _peutTeleverser;
   late final bool _peutDonnerAvis;
+
+  /// Vrai pour le personnel, qui peut changer le statut des dossiers.
+  late final bool _estPersonnel;
+
+  /// Vrai pour un étudiant, qui peut créer et modifier son dossier.
+  late final bool _estEtudiant;
 
   /// Dossiers visibles par le compte.
   List<Map<String, dynamic>> _folders = [];
@@ -94,6 +90,8 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       'student',
     }.contains(auth.role);
     _peutDonnerAvis = const {'admin', 'supervisor'}.contains(auth.role);
+    _estPersonnel = auth.canManage;
+    _estEtudiant = auth.role == 'student';
     _loadFolders();
   }
 
@@ -118,6 +116,53 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         _loading = false;
         _error = _message(e);
       });
+    }
+  }
+
+  /// Ouvre le formulaire de dossier : création ([folder] null) ou
+  /// modification de l'entreprise et du sujet.
+  Future<void> _editerDossier({Map<String, dynamic>? folder}) async {
+    final saisie = await showDialog<(String, String)>(
+      context: context,
+      builder: (_) => _FolderDialog(
+        entreprise: folder?['company_name']?.toString(),
+        sujet: folder?['subject']?.toString(),
+      ),
+    );
+    if (saisie == null || !mounted) return;
+    final (entreprise, sujet) = saisie;
+    try {
+      if (folder == null) {
+        await _service.createFolder(companyName: entreprise, subject: sujet);
+      } else {
+        await _service.updateFolder(
+          int.parse(folder['id'].toString()),
+          companyName: entreprise,
+          subject: sujet,
+        );
+      }
+      if (!mounted) return;
+      SgToast.show(
+        context,
+        folder == null ? 'Dossier de stage créé.' : 'Dossier mis à jour.',
+      );
+      // Le profil (statut du dossier) et la liste sont rafraîchis.
+      await context.read<AuthProvider>().fetchUserProfile();
+      await _loadFolders();
+    } catch (e) {
+      if (mounted) SgToast.show(context, _message(e), tone: SgTone.danger);
+    }
+  }
+
+  /// Change le statut d'un dossier (réservé au personnel).
+  Future<void> _changerStatut(int folderId, String statut) async {
+    try {
+      await _service.setFolderStatus(folderId, statut);
+      if (!mounted) return;
+      SgToast.show(context, 'Statut du dossier : ${libelleStatut(statut)}.');
+      await _loadFolders();
+    } catch (e) {
+      if (mounted) SgToast.show(context, _message(e), tone: SgTone.danger);
     }
   }
 
@@ -202,8 +247,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       if (q.isNotEmpty && !nom.contains(q) && !sujet.contains(q)) {
         return false;
       }
-      return _filtre == 'Tous' ||
-          _labelStatut(f['status']?.toString()) == _filtre;
+      return _filtre == 'Tous' || f['status']?.toString() == _filtre;
     }).toList();
   }
 
@@ -238,9 +282,8 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   /// Indicateurs, filtres puis liste des dossiers.
   Widget _contenu() {
     final visibles = _filtrees;
-    int compte(String label) => _folders
-        .where((f) => _labelStatut(f['status']?.toString()) == label)
-        .length;
+    int compte(String statut) =>
+        _folders.where((f) => f['status']?.toString() == statut).length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -257,20 +300,20 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                 icon: Icons.folder_open_rounded,
               ),
               SgStatCard(
-                label: 'En attente',
-                value: '${compte('En attente')}',
+                label: 'En attente (brouillon ou soumis)',
+                value: '${compte('brouillon') + compte('soumis')}',
                 icon: Icons.hourglass_top_rounded,
                 tone: SgTone.warning,
               ),
               SgStatCard(
-                label: 'Validés',
-                value: '${compte('Validé')}',
+                label: 'Recevables',
+                value: '${compte('recevable')}',
                 icon: Icons.verified_outlined,
                 tone: SgTone.success,
               ),
               SgStatCard(
                 label: 'Rejetés',
-                value: '${compte('Rejeté')}',
+                value: '${compte('rejete')}',
                 icon: Icons.cancel_outlined,
                 tone: SgTone.danger,
               ),
@@ -295,9 +338,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                 hint: 'Entreprise ou sujet…',
                 onChanged: (v) => setState(() => _q = v),
               ),
-              for (final s in ['Tous', 'En attente', 'Validé', 'Rejeté'])
+              for (final s in ['Tous', ..._statutsDossier])
                 SgChip(
-                  label: s,
+                  label: s == 'Tous' ? 'Tous' : libelleStatut(s),
                   selected: _filtre == s,
                   onTap: () => setState(() => _filtre = s),
                 ),
@@ -310,8 +353,19 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
             icon: Icons.folder_open_outlined,
             title: _folders.isEmpty ? 'Aucun dossier' : 'Aucun résultat',
             message: _folders.isEmpty
-                ? 'Aucun dossier de stage ne vous est encore accessible.'
+                ? (_estEtudiant
+                      ? 'Commencez par créer votre dossier de stage : '
+                            'entreprise d’accueil et sujet.'
+                      : 'Aucun dossier de stage ne vous est encore accessible.')
                 : 'Aucun dossier ne correspond à votre recherche.',
+            // Un étudiant sans dossier peut le créer directement ici.
+            action: _folders.isEmpty && _estEtudiant
+                ? SgButton(
+                    'Créer mon dossier de stage',
+                    icon: Icons.create_new_folder_outlined,
+                    onPressed: () => _editerDossier(),
+                  )
+                : null,
           )
         else
           for (final folder in visibles) _folderCard(folder),
@@ -345,7 +399,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
               child: const Icon(
                 Icons.folder_open_rounded,
                 size: 21,
-                color: AppColors.gold,
+                color: AppColors.goldDeep,
               ),
             ),
             title: Text(
@@ -366,7 +420,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                 style: const TextStyle(fontSize: 12, color: AppColors.grey),
               ),
             ),
-            trailing: SgBadge(_labelStatut(statut), tone: _toneStatut(statut)),
+            trailing: SgStatusBadge(statut ?? ''),
             // Chargement paresseux : versions récupérées à la 1re ouverture.
             onExpansionChanged: (open) {
               if (open && !_documents.containsKey(folderId)) {
@@ -380,6 +434,42 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                 label: 'Sujet',
                 value: folder['subject']?.toString() ?? 'Non défini',
               ),
+              // Personnel : changement du statut du dossier.
+              if (_estPersonnel) ...[
+                const SizedBox(height: 16),
+                const SgOverline('Statut du dossier'),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final s in _statutsDossier)
+                      SgChip(
+                        label: libelleStatut(s),
+                        selected: statut == s,
+                        onTap: statut == s
+                            ? null
+                            : () => _changerStatut(folderId, s),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Un dossier « Recevable » peut être planifié en soutenance.',
+                  style: TextStyle(fontSize: 11.5, color: AppColors.grey),
+                ),
+              ],
+              // Étudiant : modification tant que le dossier n'est pas recevable.
+              if (_estEtudiant && statut != 'recevable') ...[
+                const SizedBox(height: 14),
+                SgButton(
+                  'Modifier l’entreprise ou le sujet',
+                  icon: Icons.edit_outlined,
+                  variant: SgBtnVariant.outline,
+                  dense: true,
+                  onPressed: () => _editerDossier(folder: folder),
+                ),
+              ],
               const SizedBox(height: 16),
               const SgOverline('Historique des versions'),
               const SizedBox(height: 10),
@@ -444,7 +534,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
             child: Text(
               'V$version',
               style: const TextStyle(
-                color: AppColors.gold,
+                color: AppColors.goldDeep,
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
               ),
@@ -593,7 +683,7 @@ class _AvisSheetState extends State<_AvisSheet> {
                   child: const Icon(
                     Icons.rate_review_rounded,
                     size: 18,
-                    color: AppColors.gold,
+                    color: AppColors.goldDeep,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -764,6 +854,97 @@ class _AvisSheetState extends State<_AvisSheet> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Boîte de dialogue de création / modification d'un dossier de stage
+/// (entreprise d'accueil et sujet).
+class _FolderDialog extends StatefulWidget {
+  const _FolderDialog({this.entreprise, this.sujet});
+
+  /// Entreprise actuelle (modification) ou `null` (création).
+  final String? entreprise;
+
+  /// Sujet actuel (modification) ou `null` (création).
+  final String? sujet;
+
+  @override
+  State<_FolderDialog> createState() => _FolderDialogState();
+}
+
+/// État du formulaire de dossier.
+class _FolderDialogState extends State<_FolderDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final _entreprise = TextEditingController(text: widget.entreprise ?? '');
+  late final _sujet = TextEditingController(text: widget.sujet ?? '');
+
+  @override
+  void dispose() {
+    _entreprise.dispose();
+    _sujet.dispose();
+    super.dispose();
+  }
+
+  /// Valide puis renvoie le couple (entreprise, sujet).
+  void _valider() {
+    if (!_formKey.currentState!.validate()) return;
+    Navigator.pop(context, (_entreprise.text.trim(), _sujet.text.trim()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final creation = widget.entreprise == null;
+    return AlertDialog(
+      title: Text(creation ? 'Créer mon dossier de stage' : 'Modifier mon dossier'),
+      content: SizedBox(
+        width: 460,
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: _entreprise,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Entreprise d’accueil',
+                  prefixIcon: Icon(Icons.apartment_rounded),
+                ),
+                validator: (v) =>
+                    v == null || v.trim().isEmpty ? 'Champ obligatoire' : null,
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _sujet,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Sujet du stage',
+                  prefixIcon: Icon(Icons.subject_rounded),
+                  alignLabelWithHint: true,
+                ),
+                validator: (v) =>
+                    v == null || v.trim().isEmpty ? 'Champ obligatoire' : null,
+              ),
+              if (creation) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  'Le dossier est créé au statut « Brouillon » pour la campagne '
+                  'en cours ; la scolarité le déclarera ensuite recevable.',
+                  style: TextStyle(fontSize: 12, color: AppColors.grey),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Annuler'),
+        ),
+        SgButton(creation ? 'Créer le dossier' : 'Enregistrer', onPressed: _valider),
+      ],
     );
   }
 }

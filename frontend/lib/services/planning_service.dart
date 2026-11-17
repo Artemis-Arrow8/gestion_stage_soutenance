@@ -66,6 +66,15 @@ class PlanningService {
     return ApiService.requireObject(data);
   }
 
+  /// Change le statut de la soutenance [id] (`planifie`, `confirme`,
+  /// `termine` ou `annule`) sans modifier son créneau.
+  Future<void> updateDefenseStatus(int id, String status) async {
+    await api.patch('soutenances/$id/', {'status': status});
+  }
+
+  /// Supprime définitivement la soutenance [id].
+  Future<void> deleteDefense(int id) => api.delete('soutenances/$id/');
+
   // -------------------------------------------------------------------
   // Catalogue des salles (CRUD, réservé au personnel)
   // -------------------------------------------------------------------

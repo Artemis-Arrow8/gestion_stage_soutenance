@@ -72,8 +72,70 @@ class ReviewSerializer(serializers.ModelSerializer):
 
 
 class AssessmentSerializer(serializers.ModelSerializer):
-    """Notes (rapport, oral, moyenne) et validation finale d'une soutenance."""
+    """
+    Notes (rapport, oral, moyenne) et validation finale d'une soutenance.
+
+    Règles ajoutées :
+        * une seule évaluation par soutenance ;
+        * si la moyenne finale n'est pas fournie, elle est calculée
+          automatiquement à partir des notes de rapport et d'oral.
+    Champs ajoutés en lecture seule pour l'affichage : nom de l'étudiant,
+    sujet, jury et créneau de la soutenance évaluée.
+    """
+
+    student_name = serializers.CharField(
+        source='defense.folder.student.full_name', read_only=True,
+    )
+    subject = serializers.CharField(source='defense.folder.subject', read_only=True)
+    jury_name = serializers.CharField(source='defense.jury.name', read_only=True, default='')
+    defense_start = serializers.SerializerMethodField()
 
     class Meta:
         model = Assessment
-        fields = '__all__'
+        fields = [
+            'id',
+            'defense',
+            'student_name',
+            'subject',
+            'jury_name',
+            'defense_start',
+            'report_grade',
+            'oral_grade',
+            'final_average',
+            'is_approved',
+        ]
+
+    def get_defense_start(self, assessment):
+        """Retourne le début du créneau de la soutenance (ISO 8601) ou None."""
+        slot = assessment.defense.slot_range if assessment.defense_id else None
+        return slot.lower.isoformat() if slot is not None and slot.lower else None
+
+    def validate(self, attrs):
+        """
+        Vérifie l'unicité par soutenance et complète la moyenne finale.
+
+        Lève :
+            ValidationError : une évaluation existe déjà pour cette soutenance.
+        """
+        attrs = super().validate(attrs)
+        defense = attrs.get('defense') or (self.instance.defense if self.instance else None)
+        if defense is not None:
+            doublons = Assessment.objects.filter(defense=defense)
+            if self.instance is not None:
+                doublons = doublons.exclude(pk=self.instance.pk)
+            if doublons.exists():
+                raise serializers.ValidationError(
+                    {'defense': 'Cette soutenance a déjà une évaluation : modifiez-la.'}
+                )
+
+        # Valeurs effectives (fournies, sinon actuelles en modification).
+        def valeur(champ):
+            if champ in attrs:
+                return attrs[champ]
+            return getattr(self.instance, champ, None) if self.instance else None
+
+        rapport, oral = valeur('report_grade'), valeur('oral_grade')
+        # Moyenne calculée seulement si elle n'est pas saisie explicitement.
+        if 'final_average' not in attrs and rapport is not None and oral is not None:
+            attrs['final_average'] = round((rapport + oral) / 2, 2)
+        return attrs

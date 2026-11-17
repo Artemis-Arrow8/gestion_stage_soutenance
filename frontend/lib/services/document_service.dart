@@ -22,6 +22,41 @@ class DocumentService {
     return api.getList('internship-folders/');
   }
 
+  /// Crée le dossier de stage de l'étudiant connecté.
+  ///
+  /// Le serveur rattache automatiquement le dossier à la fiche de
+  /// l'étudiant et à la campagne active, au statut « brouillon ».
+  Future<Map<String, dynamic>> createFolder({
+    required String companyName,
+    required String subject,
+  }) async {
+    final data = await api.post('internship-folders/', {
+      'company_name': companyName,
+      'subject': subject,
+    });
+    return ApiService.requireObject(data);
+  }
+
+  /// Modifie l'entreprise et le sujet du dossier [folderId].
+  Future<void> updateFolder(
+    int folderId, {
+    required String companyName,
+    required String subject,
+  }) async {
+    await api.patch('internship-folders/$folderId/', {
+      'company_name': companyName,
+      'subject': subject,
+    });
+  }
+
+  /// Change le statut du dossier [folderId] (réservé au personnel).
+  ///
+  /// Valeurs usuelles : `brouillon`, `soumis`, `recevable`, `rejete`.
+  /// Un dossier « recevable » devient planifiable en soutenance.
+  Future<void> setFolderStatus(int folderId, String status) async {
+    await api.patch('internship-folders/$folderId/', {'status': status});
+  }
+
   /// Liste les versions de documents du dossier [folderId].
   Future<List<Map<String, dynamic>>> getDocuments(int folderId) async {
     final documents = await api.getList('document-versions/');

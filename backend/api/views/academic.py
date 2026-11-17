@@ -89,6 +89,11 @@ class InternshipFolderViewSet(viewsets.ModelViewSet):
             serializer.fields['status'].read_only = True
             if self.action in ('update', 'partial_update'):
                 serializer.fields['campaign'].read_only = True
+            else:
+                # À la création, la campagne devient facultative : l'étudiant
+                # ne peut pas lister les campagnes, le serveur choisit donc
+                # la campagne active (voir `perform_create`).
+                serializer.fields['campaign'].required = False
         return serializer
 
     def get_queryset(self):
@@ -115,16 +120,25 @@ class InternshipFolderViewSet(viewsets.ModelViewSet):
         Enregistre un nouveau dossier.
 
         Pour un étudiant, le dossier est forcément rattaché à sa propre fiche
-        et créé au statut « brouillon ».
+        et créé au statut « brouillon ». Sans campagne fournie, la campagne
+        active la plus récente est utilisée.
 
         Lève :
             PermissionDenied : compte étudiant sans fiche associée.
+            ValidationError : aucune campagne active disponible.
         """
         student = etudiant_du_compte(self.request.user)
         if get_user_role(self.request.user) == 'student':
             if student is None:
                 raise PermissionDenied("Aucun profil étudiant n'est associé à ce compte.")
-            serializer.save(student=student, status='brouillon')
+            campagne = serializer.validated_data.get('campaign')
+            if campagne is None:
+                campagne = Campaign.objects.filter(is_active=True).order_by('-id').first()
+            if campagne is None:
+                raise ValidationError({
+                    'campaign': "Aucune campagne n'est ouverte : contactez la scolarité."
+                })
+            serializer.save(student=student, status='brouillon', campaign=campagne)
             return
         serializer.save()
 
@@ -272,6 +286,9 @@ class ReviewViewSet(viewsets.ModelViewSet):
 class AssessmentViewSet(viewsets.ModelViewSet):
     """CRUD des évaluations et notes finales (/api/assessments/), réservé au personnel."""
 
-    queryset = Assessment.objects.all()
+    # Jointures préchargées (étudiant, jury) et tri par date de soutenance.
+    queryset = Assessment.objects.select_related(
+        'defense__folder__student', 'defense__jury',
+    ).order_by('defense__slot_range', 'pk')
     serializer_class = AssessmentSerializer
     permission_classes = [IsAdminOrPedagogicalResponsible]

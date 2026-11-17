@@ -221,6 +221,18 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Change le mot de passe du compte connecté.
+  ///
+  /// Lève une [ApiException] au message explicite si le mot de passe
+  /// actuel est faux ou si le nouveau ne respecte pas les règles de
+  /// sécurité du serveur. La session en cours reste ouverte.
+  Future<void> changePassword(String oldPassword, String newPassword) async {
+    await api.post('profile/password/', {
+      'old_password': oldPassword,
+      'new_password': newPassword,
+    });
+  }
+
   /// Ferme la session : révocation distante du jeton, puis effacement local.
   ///
   /// La déconnexion locale a toujours lieu, même si le serveur est

@@ -636,7 +636,7 @@ class _PlanningScreenState extends State<PlanningScreen> {
             ),
           ),
           const SizedBox(width: 8),
-          SgBadge(d.status, tone: sgToneForStatus(d.status)),
+          SgStatusBadge(d.status),
         ],
       ),
     );

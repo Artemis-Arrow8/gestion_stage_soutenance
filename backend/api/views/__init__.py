@@ -2,7 +2,7 @@
 Paquet des vues de l'API SGSUS, découpé par domaine fonctionnel.
 
 Organisation :
-    * `auth`     : connexion, profil, déconnexion (JWT) ;
+    * `auth`     : connexion, profil, mot de passe, déconnexion (JWT) ;
     * `accounts` : administration des comptes utilisateurs ;
     * `academic` : campagnes, étudiants, dossiers, documents, avis, évaluations ;
     * `planning` : salles, jurys, membres de jury et soutenances ;
@@ -22,7 +22,13 @@ from .academic import (
     StudentViewSet,
 )
 from .accounts import UserAccountViewSet
-from .auth import LoginView, LogoutView, UserProfileView, construire_profil
+from .auth import (
+    ChangePasswordView,
+    LoginView,
+    LogoutView,
+    UserProfileView,
+    construire_profil,
+)
 from .helpers import debut_jour_utc, etudiant_du_compte, lire_parametre_date
 from .planning import DefenseViewSet, JuryMemberViewSet, JuryViewSet, SalleViewSet
 from .system import accueil
@@ -36,6 +42,7 @@ _jour_UTC = debut_jour_utc
 __all__ = [
     'AssessmentViewSet',
     'CampaignViewSet',
+    'ChangePasswordView',
     'DefenseViewSet',
     'DocumentVersionViewSet',
     'InternshipFolderViewSet',

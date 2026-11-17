@@ -5,8 +5,13 @@
 /// pas leurs propres couleurs : ils utilisent [AppColors] et [AppTheme], ce
 /// qui garantit une interface cohérente et facile à faire évoluer.
 ///
-/// Charte graphique : encre (bleu-noir profond), or et blanc, complétés par
-/// une gamme de gris « ardoise » pour les textes secondaires et bordures.
+/// Charte graphique : les couleurs de l'université — NOIR, BLANC et OR.
+///   * le noir structure l'interface (barre latérale, bandeaux, textes) ;
+///   * l'or sert d'accent (actions principales, éléments actifs, repères) ;
+///   * le blanc et des gris chauds (légèrement crème, sans reflet bleu)
+///     forment les fonds, pour une ambiance sobre et élégante.
+/// Les couleurs « sémantiques » (vert, orange, rouge) ne servent qu'aux
+/// statuts (validé, en attente, refusé), afin de rester lisibles.
 library;
 
 import 'package:material_ui/material_ui.dart';
@@ -15,72 +20,75 @@ import 'package:material_ui/material_ui.dart';
 abstract final class AppColors {
   // --- Couleurs de marque -------------------------------------------------
 
-  /// Encre : texte principal, barre latérale, éléments sélectionnés.
-  static const ink = Color(0xFF0F172A);
+  /// Noir profond : texte principal, barre latérale, éléments sélectionnés.
+  static const ink = Color(0xFF0B0B0C);
 
-  /// Encre adoucie : surfaces sombres secondaires (survol, infobulles).
-  static const inkSoft = Color(0xFF1E293B);
+  /// Noir adouci : surfaces sombres secondaires (survol, infobulles).
+  static const inkSoft = Color(0xFF1C1C1E);
 
   /// Or : couleur d'accent (boutons principaux, éléments actifs).
   static const gold = Color(0xFFC9A227);
 
-  /// Or très clair : fonds d'icônes et de badges d'accent.
-  static const goldSoft = Color(0xFFFBF4DF);
+  /// Or foncé : texte et icônes dorés sur fond blanc (meilleur contraste).
+  static const goldDeep = Color(0xFF8C6A12);
 
-  // --- Neutres ----------------------------------------------------------------
+  /// Or très clair : fonds d'icônes et de badges d'accent.
+  static const goldSoft = Color(0xFFF8F0DA);
+
+  // --- Neutres chauds -------------------------------------------------------
 
   /// Blanc pur : cartes, champs de saisie, barre supérieure.
   static const white = Colors.white;
 
-  /// Fond général des pages (gris très clair légèrement bleuté).
-  static const bg = Color(0xFFF4F6FA);
+  /// Fond général des pages (blanc cassé légèrement crème).
+  static const bg = Color(0xFFF6F5F1);
 
   /// Fond alternatif discret (en-têtes de tableau, cellules hors mois).
-  static const surfaceAlt = Color(0xFFF8FAFC);
+  static const surfaceAlt = Color(0xFFFAF9F6);
 
   /// Texte secondaire (sous-titres, libellés).
-  static const grey = Color(0xFF64748B);
+  static const grey = Color(0xFF5E5C57);
 
   /// Texte tertiaire (indications, icônes discrètes).
-  static const greyLight = Color(0xFF94A3B8);
+  static const greyLight = Color(0xFF9C9890);
 
   /// Bordures et séparateurs.
-  static const line = Color(0xFFE2E8F0);
+  static const line = Color(0xFFE7E3D9);
 
   // --- Couleurs sémantiques (texte / fond associé) -------------------------
 
   /// Succès : validé, disponible, confirmé.
-  static const success = Color(0xFF15803D);
-  static const successBg = Color(0xFFEAF7EF);
+  static const success = Color(0xFF1E7A46);
+  static const successBg = Color(0xFFE9F5EE);
 
   /// Avertissement : en attente, occupé.
-  static const warning = Color(0xFFB45309);
-  static const warningBg = Color(0xFFFFF4E0);
+  static const warning = Color(0xFFB0620F);
+  static const warningBg = Color(0xFFFFF2DF);
 
   /// Danger : erreur, conflit, refus.
-  static const danger = Color(0xFFB91C1C);
-  static const dangerBg = Color(0xFFFDECEC);
+  static const danger = Color(0xFFB3261E);
+  static const dangerBg = Color(0xFFFCEBEA);
 
-  /// Information : éléments neutres mis en valeur.
-  static const info = Color(0xFF1D4ED8);
-  static const infoBg = Color(0xFFEAF0FF);
+  /// Information : ton bronze, dans l'esprit noir et or de la charte.
+  static const info = Color(0xFF7A5B12);
+  static const infoBg = Color(0xFFF4ECD8);
 
   /// Fond neutre (badges gris, états vides).
-  static const neutralBg = Color(0xFFF1F5F9);
+  static const neutralBg = Color(0xFFF0EEE9);
 
-  // --- Barre latérale sombre ---------------------------------------------------
+  // --- Barre latérale noire ----------------------------------------------------
 
   /// Fond d'un élément de navigation actif ou survolé.
-  static const sidebarActive = Color(0xFF1E293B);
+  static const sidebarActive = Color(0xFF1F1F21);
 
   /// Texte et icônes de navigation inactifs.
-  static const sidebarText = Color(0xFFCBD5E1);
+  static const sidebarText = Color(0xFFD9D5CB);
 
   /// Texte discret de la barre latérale (titres de section).
-  static const sidebarMuted = Color(0xFF64748B);
+  static const sidebarMuted = Color(0xFF7D7A73);
 
   /// Séparateurs de la barre latérale.
-  static const sidebarLine = Color(0xFF1E293B);
+  static const sidebarLine = Color(0xFF242426);
 }
 
 /// Seuils de largeur (en pixels logiques) pour la mise en page adaptative.
@@ -107,25 +115,30 @@ abstract final class AppTheme {
   static const LinearGradient goldLine = LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
-    colors: [Color(0xFFD9B44A), Color(0xFFB8901C)],
+    colors: [Color(0xFFE6C766), Color(0xFFB8901C)],
   );
 
-  /// Dégradé sombre des bandeaux d'accueil et en-têtes de fiche.
+  /// Dégradé noir des bandeaux d'accueil et en-têtes de fiche.
   static const LinearGradient inkGradient = LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
-    colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+    colors: [Color(0xFF0B0B0C), Color(0xFF232325)],
+  );
+
+  /// Filet doré horizontal (sous la barre supérieure, séparateurs de marque).
+  static const LinearGradient goldRule = LinearGradient(
+    colors: [Color(0xFFB8901C), Color(0xFFE6C766), Color(0xFFB8901C)],
   );
 
   /// Ombre douce des cartes : diffuse et très légère (aspect « flottant »).
   static const List<BoxShadow> softShadow = [
     BoxShadow(
-      color: Color(0x0D0F172A),
+      color: Color(0x0F000000),
       blurRadius: 18,
       offset: Offset(0, 6),
     ),
     BoxShadow(
-      color: Color(0x080F172A),
+      color: Color(0x0A000000),
       blurRadius: 3,
       offset: Offset(0, 1),
     ),
@@ -268,7 +281,7 @@ abstract final class AppTheme {
         textStyle: const TextStyle(color: Colors.white, fontSize: 11.5),
       ),
       scrollbarTheme: ScrollbarThemeData(
-        thumbColor: WidgetStateProperty.all(const Color(0xFFCBD5E1)),
+        thumbColor: WidgetStateProperty.all(const Color(0xFFD6D2C7)),
         radius: const Radius.circular(8),
         thickness: WidgetStateProperty.all(6),
       ),

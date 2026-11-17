@@ -1,3 +1,9 @@
+"""
+Tests des garde-fous de configuration en production (DEBUG=False) :
+hôtes autorisés, HTTPS, base de données et rôle PostgreSQL dédié.
+Chaque test importe les réglages dans un sous-processus isolé.
+"""
+
 import os
 from pathlib import Path
 import subprocess
@@ -52,23 +58,27 @@ class ProductionSettingsTests(unittest.TestCase):
         )
 
     def test_production_requires_explicit_allowed_hosts(self):
+        """En production, DJANGO_ALLOWED_HOSTS est obligatoire."""
         result = self._import_settings()
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("DJANGO_ALLOWED_HOSTS", result.stderr)
 
     def test_production_accepts_explicit_allowed_hosts(self):
+        """En production, un hôte explicite permet le démarrage."""
         result = self._import_settings("sgsus.example.test")
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_production_rejects_an_empty_parsed_host_list(self):
+        """Une liste d'hôtes vide après analyse (« ,,, ») est refusée."""
         result = self._import_settings(",,,")
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("DJANGO_ALLOWED_HOSTS", result.stderr)
 
     def test_production_requires_https_and_secure_cookies(self):
+        """En production, la redirection HTTPS est obligatoire."""
         result = self._import_settings(
             "sgsus.example.test",
             secure_ssl_redirect="False",
@@ -78,6 +88,7 @@ class ProductionSettingsTests(unittest.TestCase):
         self.assertIn("DJANGO_SECURE_SSL_REDIRECT", result.stderr)
 
     def test_production_uses_the_dedicated_database_role(self):
+        """Django utilise le rôle applicatif dédié de la base."""
         result = self._import_settings(
             "sgsus.example.test",
             command=(
@@ -90,6 +101,7 @@ class ProductionSettingsTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "sgsus_app_user")
 
     def test_production_reads_render_database_url_with_tls(self):
+        """DATABASE_URL (Render) est lue avec TLS exigé par défaut."""
         result = self._import_settings(
             "sgsus.example.test",
             command=(
@@ -113,6 +125,7 @@ class ProductionSettingsTests(unittest.TestCase):
         )
 
     def test_production_rejects_non_postgresql_database_url(self):
+        """Une DATABASE_URL non PostgreSQL est refusée."""
         result = self._import_settings(
             "sgsus.example.test",
             database_url="mysql://render_user:synthetic-password@db.example.test/sgsus",
@@ -122,6 +135,7 @@ class ProductionSettingsTests(unittest.TestCase):
         self.assertIn("DATABASE_URL", result.stderr)
 
     def test_production_rejects_the_administrator_database_role(self):
+        """Le compte administrateur PostgreSQL est refusé comme rôle applicatif."""
         result = self._import_settings(
             "sgsus.example.test",
             db_user="db_admin",

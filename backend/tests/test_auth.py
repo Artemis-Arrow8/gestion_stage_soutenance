@@ -1,3 +1,9 @@
+"""
+Tests du module d'authentification et des permissions par rôle :
+connexion JWT, renouvellement, déconnexion, profil, gestion des comptes
+et isolement des données entre étudiants, encadreurs, jurys et personnel.
+"""
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.urls import reverse
@@ -26,6 +32,7 @@ class AuthModuleTestCase(APITestCase):
     """Vérifie la connexion, les jetons JWT et les permissions associées."""
 
     def setUp(self):
+        """Crée les groupes de rôles, les comptes de test et les données liées."""
         self.campaign = Campaign.objects.create(
             academic_year="2025-2026",
             is_active=True,
@@ -57,6 +64,7 @@ class AuthModuleTestCase(APITestCase):
         self.review_list_url = reverse("review-list")
 
     def test_login_success_returns_jwt_tokens(self):
+        """Une connexion valide renvoie les jetons d'accès et de renouvellement."""
         response = self.client.post(
             self.login_url,
             {"username": "ETU12345", "password": "student-password"},
@@ -69,6 +77,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertTrue(response.data["refresh"])
 
     def test_refresh_endpoint_returns_new_access_token(self):
+        """Le jeton de renouvellement permet d'obtenir un nouveau jeton d'accès."""
         login = self.client.post(
             self.login_url,
             {"username": "ETU12345", "password": "student-password"},
@@ -85,6 +94,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertTrue(response.data["access"])
 
     def test_login_rejects_incorrect_password(self):
+        """Un mauvais mot de passe est refusé (401)."""
         response = self.client.post(
             self.login_url,
             {"username": "ETU12345", "password": "incorrect"},
@@ -94,6 +104,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_login_rejects_unknown_account(self):
+        """Un identifiant inconnu est refusé (401)."""
         response = self.client.post(
             self.login_url,
             {"username": "INCONNU999", "password": "password123"},
@@ -103,6 +114,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_login_requires_both_credentials(self):
+        """L'identifiant et le mot de passe sont tous deux obligatoires."""
         response = self.client.post(
             self.login_url,
             {"username": ""},
@@ -112,6 +124,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_login_accepts_administrator_without_student_profile(self):
+        """Un administrateur se connecte sans fiche étudiante."""
         response = self.client.post(
             self.login_url,
             {"username": "admin_user", "password": "admin-password"},
@@ -122,6 +135,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.data["user"]["role"], "admin")
 
     def test_login_rejects_account_without_an_sgsus_role(self):
+        """Un compte sans rôle SGSUS ne peut pas se connecter (403)."""
         User.objects.create_user(
             username="unassigned_account",
             password="Sgsus-Account!2026",
@@ -136,12 +150,14 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_admin_permission(self):
+        """Le rôle administrateur est bien reconnu."""
         self.client.force_authenticate(user=self.django_user)
         response = self.client.get(self.campaign_list_url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_responsible_permission_uses_django_group(self):
+        """Le rôle responsable provient du groupe Django « responsible »."""
         responsible = User.objects.create_user(
             username="responsible_user",
             password="responsible-password",
@@ -154,12 +170,14 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_student_permission_for_existing_student_object(self):
+        """Une fiche étudiante liée donne le rôle étudiant."""
         self.client.force_authenticate(user=self.student)
         response = self.client.get(self.folder_list_url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_supervisor_permission(self):
+        """Le rôle encadreur est reconnu et limité à ses droits."""
         supervisor = User.objects.create_user(
             username="supervisor_user",
             password="supervisor-password",
@@ -172,6 +190,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_supervisor_can_only_read_and_create_their_own_reviews(self):
+        """Un encadreur ne lit et ne crée que ses propres avis."""
         supervisor = User.objects.create_user(
             username="review_author",
             password="Sgsus-Account!2026",
@@ -239,6 +258,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(updated_role.data["author_role"], "encadreur")
 
     def test_supervisor_ne_voit_que_les_dossiers_et_documents_affectes(self):
+        """Un encadreur ne voit que les dossiers et documents qui lui sont affectés."""
         supervisor = User.objects.create_user(
             username="assigned_supervisor",
             password="Sgsus-Account!2026",
@@ -304,6 +324,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(avis_interdit.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_protected_endpoint_rejects_missing_authorization(self):
+        """Une route protégée refuse une requête sans jeton."""
         response = self.client.get(self.student_list_url)
 
         self.assertIn(
@@ -312,6 +333,7 @@ class AuthModuleTestCase(APITestCase):
         )
 
     def test_protected_endpoint_rejects_non_bearer_authorization(self):
+        """Une route protégée refuse un en-tête d'autorisation non « Bearer »."""
         self.client.credentials(HTTP_AUTHORIZATION="Basic dXNlcjpwYXNz")
 
         response = self.client.get(self.student_list_url)
@@ -322,6 +344,7 @@ class AuthModuleTestCase(APITestCase):
         )
 
     def test_student_jwt_is_accepted_for_student_endpoint(self):
+        """Le jeton d'un étudiant est accepté sur les routes étudiantes."""
         own_folder = InternshipFolder.objects.create(
             student=self.student,
             campaign=self.campaign,
@@ -348,6 +371,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual([folder["id"] for folder in response.data], [own_folder.id])
 
     def test_student_cannot_mark_a_folder_receivable_or_edit_another_student_folder(self):
+        """Un étudiant ne peut ni rendre son dossier recevable ni modifier celui d'un autre."""
         other_student = Student.objects.create(
             student_number="ETU67890",
             full_name="Étudiant tiers",
@@ -385,6 +409,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(update_other.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_django_user_can_access_admin_endpoint(self):
+        """Un compte du groupe admin accède aux routes d'administration."""
         self.client.force_authenticate(user=self.django_user)
 
         response = self.client.get(self.student_list_url)
@@ -392,6 +417,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_invalid_bearer_token_is_rejected(self):
+        """Un jeton invalide est refusé (401)."""
         self.client.credentials(HTTP_AUTHORIZATION="Bearer jeton-invalide")
 
         response = self.client.get(self.student_list_url)
@@ -399,6 +425,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_jwt_for_deleted_user_is_rejected(self):
+        """Le jeton d'un compte supprimé n'est plus accepté."""
         access = str(RefreshToken.for_user(self.django_user).access_token)
         self.django_user.delete()
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
@@ -408,6 +435,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_login_returns_the_role_for_each_staff_account_type(self):
+        """La connexion renvoie le bon rôle pour chaque type de personnel."""
         for username, role in (
             ("responsible_user_login", "responsible"),
             ("supervisor_user_login", "supervisor"),
@@ -430,6 +458,7 @@ class AuthModuleTestCase(APITestCase):
                 self.assertEqual(response.data["user"]["role"], role)
 
     def test_login_rejects_inactive_account(self):
+        """Un compte désactivé ne peut pas se connecter."""
         self.student_user.is_active = False
         self.student_user.save(update_fields=["is_active"])
 
@@ -442,6 +471,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_jwt_for_inactive_account_is_rejected(self):
+        """Le jeton d'un compte désactivé n'est plus accepté."""
         access = str(RefreshToken.for_user(self.student_user).access_token)
         self.student_user.is_active = False
         self.student_user.save(update_fields=["is_active"])
@@ -454,6 +484,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_logout_revokes_the_refresh_token(self):
+        """La déconnexion révoque le jeton de renouvellement."""
         login = self.client.post(
             self.login_url,
             {"username": "ETU12345", "password": "student-password"},
@@ -478,6 +509,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(refresh.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_logout_rejects_another_users_refresh_token(self):
+        """On ne peut pas révoquer le jeton d'un autre utilisateur."""
         student_login = self.client.post(
             self.login_url,
             {"username": "ETU12345", "password": "student-password"},
@@ -501,6 +533,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_profile_returns_only_the_authenticated_user(self):
+        """Le profil renvoyé est uniquement celui du compte connecté."""
         access = str(RefreshToken.for_user(self.student_user).access_token)
         response = self.client.get(
             reverse("api-profile"),
@@ -512,6 +545,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.data["user"]["role"], "student")
 
     def test_student_reads_only_reviews_for_their_documents(self):
+        """Un étudiant ne lit que les avis portant sur ses documents."""
         own_folder = InternshipFolder.objects.create(
             student=self.student,
             campaign=self.campaign,
@@ -568,6 +602,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(invalid_filter.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_role_permissions_are_isolated_by_endpoint(self):
+        """Chaque rôle n'accède qu'aux routes qui le concernent."""
         responsible = User.objects.create_user(
             username="responsible_matrix",
             password="Sgsus-Account!2026",
@@ -605,6 +640,7 @@ class AuthModuleTestCase(APITestCase):
                 )
 
     def test_only_administrators_can_manage_accounts(self):
+        """Seuls les administrateurs gèrent les comptes."""
         responsible = User.objects.create_user(
             username="responsible_accounts",
             password="Sgsus-Account!2026",
@@ -617,6 +653,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_staff_flag_alone_does_not_grant_administrator_api_access(self):
+        """Le seul indicateur « staff » ne donne pas les droits administrateur sur l'API."""
         staff_user = User.objects.create_user(
             username="staff_without_sgsus_role",
             password="Sgsus-Account!2026",
@@ -629,6 +666,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_administrator_can_create_and_list_a_student_account(self):
+        """Un administrateur crée et liste un compte étudiant."""
         student = Student.objects.create(
             student_number="ETU77777",
             full_name="Étudiant créé",
@@ -656,6 +694,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(listed.status_code, status.HTTP_200_OK)
 
     def test_administrator_account_can_access_django_admin_without_superuser(self):
+        """Un administrateur accède à /admin/ sans être superutilisateur."""
         self.client.force_authenticate(user=self.django_user)
 
         response = self.client.post(
@@ -674,6 +713,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertFalse(account.is_superuser)
 
     def test_business_administrator_cannot_view_superuser_accounts(self):
+        """Un administrateur métier ne voit pas les superutilisateurs."""
         superuser = User.objects.create_superuser(
             username="protected_superuser",
             email="protected@example.test",
@@ -694,6 +734,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(detail.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_administrator_can_create_a_scoped_jury_account(self):
+        """Un administrateur crée un compte jury lié à un membre."""
         jury = Jury.objects.create(name="Jury authentifié", is_complete=True)
         member = JuryMember.objects.create(
             jury=jury,
@@ -734,6 +775,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(login.data["user"]["jury_id"], jury.pk)
 
     def test_jury_role_requires_a_linked_jury_member(self):
+        """Un compte jury doit être lié à un membre de jury existant."""
         self.client.force_authenticate(user=self.django_user)
 
         response = self.client.post(
@@ -750,6 +792,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertIn("jury_member_id", response.data)
 
     def test_account_creation_rejects_weak_passwords(self):
+        """Un mot de passe trop faible est refusé à la création d'un compte."""
         self.client.force_authenticate(user=self.django_user)
 
         response = self.client.post(
@@ -766,6 +809,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertIn("password", response.data)
 
     def test_administrator_can_change_role_and_deactivate_account(self):
+        """Un administrateur change le rôle d'un compte et le désactive."""
         account = User.objects.create_user(
             username="account_to_update",
             password="Old-Passphrase!2026",
@@ -811,6 +855,7 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(active_login.status_code, status.HTTP_200_OK)
 
     def test_administrator_cannot_deactivate_own_account(self):
+        """Un administrateur ne peut pas désactiver son propre compte."""
         self.client.force_authenticate(user=self.django_user)
 
         response = self.client.patch(

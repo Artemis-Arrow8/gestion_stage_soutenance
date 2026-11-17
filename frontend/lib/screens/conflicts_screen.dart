@@ -324,7 +324,7 @@ class _ConflictsScreenState extends State<ConflictsScreen> {
                       const Icon(
                         Icons.lightbulb_outline_rounded,
                         size: 17,
-                        color: AppColors.gold,
+                        color: AppColors.goldDeep,
                       ),
                       const SizedBox(width: 9),
                       Expanded(

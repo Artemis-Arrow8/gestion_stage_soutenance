@@ -16,6 +16,7 @@ from .documents.views import DocumentDownloadView, DocumentUploadView
 from .views import (
     AssessmentViewSet,
     CampaignViewSet,
+    ChangePasswordView,
     DefenseViewSet,
     DocumentVersionViewSet,
     InternshipFolderViewSet,
@@ -59,6 +60,12 @@ urlpatterns = [
     path('login/', LoginView.as_view(), name='api-login'),
     path('logout/', LogoutView.as_view(), name='api-logout'),
     path('profile/', UserProfileView.as_view(), name='api-profile'),
+    # Changement de son propre mot de passe (utilisateur connecté).
+    path(
+        'profile/password/',
+        ChangePasswordView.as_view(),
+        name='api-change-password',
+    ),
     path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
 
     # Dépôt et téléchargement des rapports PDF.

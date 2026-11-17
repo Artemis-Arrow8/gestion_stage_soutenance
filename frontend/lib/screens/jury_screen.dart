@@ -205,7 +205,7 @@ class _JuryScreenState extends State<JuryScreen> {
                           leading: const Icon(
                             Icons.event_rounded,
                             size: 20,
-                            color: AppColors.gold,
+                            color: AppColors.goldDeep,
                           ),
                           title: Text(
                             d.studentName,
@@ -346,7 +346,7 @@ class _JuryScreenState extends State<JuryScreen> {
                   color: AppColors.goldSoft,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(Icons.groups_2_rounded, color: AppColors.gold),
+                child: const Icon(Icons.groups_2_rounded, color: AppColors.goldDeep),
               ),
               const SizedBox(width: 12),
               Expanded(

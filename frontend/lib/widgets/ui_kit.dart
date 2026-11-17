@@ -19,7 +19,8 @@ enum SgTone { gold, success, warning, danger, info, neutral }
 
 /// Retourne le couple (couleur de premier plan, couleur de fond) d'une [t].
 (Color, Color) sgTones(SgTone t) => switch (t) {
-  SgTone.gold => (AppColors.gold, AppColors.goldSoft),
+  // Or foncé sur fond doré pâle : lisible même en petit texte.
+  SgTone.gold => (AppColors.goldDeep, AppColors.goldSoft),
   SgTone.success => (AppColors.success, AppColors.successBg),
   SgTone.warning => (AppColors.warning, AppColors.warningBg),
   SgTone.danger => (AppColors.danger, AppColors.dangerBg),
@@ -49,11 +50,59 @@ SgTone sgToneForStatus(String s) {
       v.contains('recevable')) {
     return SgTone.success;
   }
-  if (v.contains('attente') || v.contains('occup') || v.contains('cours')) {
+  if (v.contains('attente') ||
+      v.contains('occup') ||
+      v.contains('cours') ||
+      v.contains('soumis')) {
     return SgTone.warning;
   }
   if (v.contains('planifi')) return SgTone.info;
+  if (v.contains('termin')) return SgTone.gold;
   return SgTone.neutral;
+}
+
+/// Libellés lisibles des statuts techniques renvoyés par l'API.
+///
+/// L'API stocke des codes sans accent (`planifie`, `recevable`…) ; cette
+/// table les traduit pour l'affichage. Un statut inconnu est affiché tel
+/// quel, avec une majuscule initiale.
+const Map<String, String> _libellesStatuts = {
+  // Soutenances
+  'planifie': 'Planifiée',
+  'confirme': 'Confirmée',
+  'termine': 'Terminée',
+  'annule': 'Annulée',
+  // Dossiers de stage
+  'brouillon': 'Brouillon',
+  'soumis': 'Soumis',
+  'recevable': 'Recevable',
+  'valide': 'Validé',
+  'rejete': 'Rejeté',
+  // Avis d'encadrement
+  'favorable': 'Favorable',
+  'defavorable': 'Défavorable',
+};
+
+/// Retourne le libellé français d'un statut technique (ex. `planifie`).
+String libelleStatut(String statut) {
+  final cle = statut.trim().toLowerCase();
+  final connu = _libellesStatuts[cle];
+  if (connu != null) return connu;
+  if (cle.isEmpty) return '—';
+  return cle[0].toUpperCase() + cle.substring(1);
+}
+
+/// Badge de statut prêt à l'emploi : libellé français + couleur adaptée.
+class SgStatusBadge extends StatelessWidget {
+  /// Crée le badge du statut technique [statut].
+  const SgStatusBadge(this.statut, {super.key});
+
+  /// Statut technique tel que renvoyé par l'API.
+  final String statut;
+
+  @override
+  Widget build(BuildContext context) =>
+      SgBadge(libelleStatut(statut), tone: sgToneForStatus(statut));
 }
 
 // ===========================================================================

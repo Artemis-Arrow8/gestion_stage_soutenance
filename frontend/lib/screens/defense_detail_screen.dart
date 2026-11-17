@@ -1,14 +1,18 @@
 /// Fiche détaillée d'une soutenance : étudiant, créneau, salle, jury et
-/// accès aux documents du dossier.
+/// accès aux documents du dossier. Le personnel peut aussi y changer le
+/// statut de la soutenance (confirmée, terminée, annulée…) ou la supprimer.
 library;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
+import '../core/network/api_service.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/dates.dart';
 import '../models/defense.dart';
 import '../providers/auth_provider.dart';
+import '../providers/planning_store.dart';
+import '../services/planning_service.dart';
 import '../widgets/app_shell.dart';
 import '../widgets/ui_kit.dart';
 import 'defense_form_screen.dart';
@@ -62,6 +66,11 @@ class DefenseDetailScreen extends StatelessWidget {
           _infos(d),
           const SizedBox(height: 16),
           _jury(),
+          // Gestion réservée au personnel : statut et suppression.
+          if (auth.canManage) ...[
+            const SizedBox(height: 16),
+            _GestionSoutenance(defense: defense),
+          ],
           // Le jury n'a pas accès à la gestion documentaire.
           if (auth.role != 'jury') ...[
             const SizedBox(height: 16),
@@ -163,7 +172,7 @@ class DefenseDetailScreen extends StatelessWidget {
         value: '${defense.startTime} – ${defense.endTime}',
       ),
       SgKv(label: 'Salle', value: defense.roomName),
-      SgKv(label: 'Statut', value: defense.status),
+      SgKv(label: 'Statut', value: libelleStatut(defense.status)),
     ];
 
     return SgCard(
@@ -287,6 +296,140 @@ class DefenseDetailScreen extends StatelessWidget {
             icon: Icons.folder_open_rounded,
             variant: SgBtnVariant.outline,
             onPressed: () => navigateToSection(context, AppSection.documents),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Statuts possibles d'une soutenance, dans leur ordre logique.
+const _statutsSoutenance = ['planifie', 'confirme', 'termine', 'annule'];
+
+/// Carte de gestion d'une soutenance (personnel) : changement de statut
+/// et suppression définitive.
+class _GestionSoutenance extends StatefulWidget {
+  const _GestionSoutenance({required this.defense});
+
+  /// Soutenance gérée.
+  final Defense defense;
+
+  @override
+  State<_GestionSoutenance> createState() => _GestionSoutenanceState();
+}
+
+/// État de la carte : opération en cours.
+class _GestionSoutenanceState extends State<_GestionSoutenance> {
+  /// Vrai pendant un appel au serveur (boutons désactivés).
+  bool _occupe = false;
+
+  /// Service de planification construit à partir de la session.
+  PlanningService get _service =>
+      PlanningService(context.read<AuthProvider>().api);
+
+  /// Recharge le planning partagé (non bloquant en cas d'erreur).
+  Future<void> _rafraichirPlanning() async {
+    try {
+      await PlanningStore.refresh(_service);
+    } catch (_) {
+      // Erreur publiée dans PlanningStore.error.
+    }
+  }
+
+  /// Change le statut puis rouvre la fiche avec le statut à jour.
+  Future<void> _changerStatut(String statut) async {
+    setState(() => _occupe = true);
+    try {
+      await _service.updateDefenseStatus(widget.defense.id, statut);
+      await _rafraichirPlanning();
+      if (!mounted) return;
+      SgToast.show(context, 'Soutenance : ${libelleStatut(statut)}.');
+      await replacePage(
+        context,
+        DefenseDetailScreen(defense: widget.defense.copier(status: statut)),
+      );
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() => _occupe = false);
+        SgToast.show(context, e.message, tone: SgTone.danger);
+      }
+    }
+  }
+
+  /// Demande confirmation puis supprime la soutenance.
+  Future<void> _supprimer() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Supprimer la soutenance'),
+        content: Text(
+          'Supprimer définitivement la soutenance de '
+          '${widget.defense.studentName} ? Son évaluation éventuelle sera '
+          'également supprimée.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Annuler'),
+          ),
+          SgButton(
+            'Supprimer',
+            variant: SgBtnVariant.danger,
+            onPressed: () => Navigator.pop(ctx, true),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _occupe = true);
+    try {
+      await _service.deleteDefense(widget.defense.id);
+      await _rafraichirPlanning();
+      if (!mounted) return;
+      SgToast.show(context, 'Soutenance supprimée.');
+      Navigator.of(context).pop();
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() => _occupe = false);
+        SgToast.show(context, e.message, tone: SgTone.danger);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SgCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SgOverline('Gestion de la soutenance'),
+          const SizedBox(height: 12),
+          const Text(
+            'Statut',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final s in _statutsSoutenance)
+                SgChip(
+                  label: libelleStatut(s),
+                  selected: widget.defense.status == s,
+                  onTap: _occupe || widget.defense.status == s
+                      ? null
+                      : () => _changerStatut(s),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SgButton(
+            'Supprimer la soutenance',
+            icon: Icons.delete_outline_rounded,
+            variant: SgBtnVariant.danger,
+            dense: true,
+            onPressed: _occupe ? null : _supprimer,
           ),
         ],
       ),

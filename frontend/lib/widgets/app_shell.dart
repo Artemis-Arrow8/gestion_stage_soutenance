@@ -23,8 +23,10 @@ import '../screens/campaigns_screen.dart';
 import '../screens/conflicts_screen.dart';
 import '../screens/dashboard_screen.dart';
 import '../screens/documents_screen.dart';
+import '../screens/evaluations_screen.dart';
 import '../screens/jury_screen.dart';
 import '../screens/planning_screen.dart';
+import '../screens/profile_screen.dart';
 import '../screens/rooms_screen.dart';
 import '../services/conflict_report.dart';
 import 'ui_kit.dart';
@@ -42,7 +44,9 @@ enum AppSection {
   rooms,
   jury,
   conflicts,
+  evaluations,
   documents,
+  profil,
 }
 
 /// Règles d'accès aux sections selon le rôle de l'utilisateur.
@@ -67,7 +71,9 @@ abstract final class Session {
       AppSection.rooms,
       AppSection.jury,
       AppSection.conflicts,
+      AppSection.evaluations,
       AppSection.documents,
+      AppSection.profil,
     ],
     'responsible' => const [
       AppSection.dashboard,
@@ -76,11 +82,25 @@ abstract final class Session {
       AppSection.rooms,
       AppSection.jury,
       AppSection.conflicts,
+      AppSection.evaluations,
       AppSection.documents,
+      AppSection.profil,
     ],
-    'jury' => const [AppSection.dashboard, AppSection.planning],
-    'student' => const [AppSection.dashboard, AppSection.documents],
-    'supervisor' => const [AppSection.dashboard, AppSection.documents],
+    'jury' => const [
+      AppSection.dashboard,
+      AppSection.planning,
+      AppSection.profil,
+    ],
+    'student' => const [
+      AppSection.dashboard,
+      AppSection.documents,
+      AppSection.profil,
+    ],
+    'supervisor' => const [
+      AppSection.dashboard,
+      AppSection.documents,
+      AppSection.profil,
+    ],
     _ => const [AppSection.dashboard],
   };
 }
@@ -96,7 +116,9 @@ extension AppSectionX on AppSection {
     AppSection.rooms => 'Salles',
     AppSection.jury => 'Jurys',
     AppSection.conflicts => 'Conflits',
+    AppSection.evaluations => 'Évaluations',
     AppSection.documents => 'Documents',
+    AppSection.profil => 'Mon profil',
   };
 
   /// Description d'une phrase (cartes d'accès rapide).
@@ -108,7 +130,9 @@ extension AppSectionX on AppSection {
     AppSection.rooms => 'Occupation et disponibilité des salles.',
     AppSection.jury => 'Membres et charge des jurys.',
     AppSection.conflicts => 'Chevauchements à arbitrer.',
+    AppSection.evaluations => 'Notes des soutenances et validation.',
     AppSection.documents => 'Dossiers, rapports et avis.',
+    AppSection.profil => 'Vos informations et votre mot de passe.',
   };
 
   /// Icône au repos.
@@ -120,7 +144,9 @@ extension AppSectionX on AppSection {
     AppSection.rooms => Icons.meeting_room_outlined,
     AppSection.jury => Icons.groups_2_outlined,
     AppSection.conflicts => Icons.report_gmailerrorred_outlined,
+    AppSection.evaluations => Icons.workspace_premium_outlined,
     AppSection.documents => Icons.folder_open_outlined,
+    AppSection.profil => Icons.person_outline_rounded,
   };
 
   /// Icône de la section active.
@@ -132,7 +158,9 @@ extension AppSectionX on AppSection {
     AppSection.rooms => Icons.meeting_room_rounded,
     AppSection.jury => Icons.groups_2_rounded,
     AppSection.conflicts => Icons.report_gmailerrorred_rounded,
+    AppSection.evaluations => Icons.workspace_premium_rounded,
     AppSection.documents => Icons.folder_open_rounded,
+    AppSection.profil => Icons.person_rounded,
   };
 }
 
@@ -145,7 +173,9 @@ Widget screenFor(AppSection section) => switch (section) {
   AppSection.rooms => const RoomsScreen(),
   AppSection.jury => const JuryScreen(),
   AppSection.conflicts => const ConflictsScreen(),
+  AppSection.evaluations => const EvaluationsScreen(),
   AppSection.documents => const DocumentsScreen(),
+  AppSection.profil => const ProfileScreen(),
 };
 
 /// Ouvre une [section] depuis le menu principal.
@@ -171,6 +201,12 @@ void navigateToSection(BuildContext context, AppSection section) {
 /// une création réussie).
 Future<T?> pushPage<T>(BuildContext context, Widget page) {
   return Navigator.of(context).push<T>(_fadeRoute<T>(page));
+}
+
+/// Remplace l'écran courant par [page] (ex. fiche rechargée après une
+/// modification), avec la même transition en fondu.
+Future<void> replacePage(BuildContext context, Widget page) {
+  return Navigator.of(context).pushReplacement(_fadeRoute<void>(page));
 }
 
 /// Transition en fondu court, plus sobre qu'un glissement latéral pour
@@ -356,10 +392,11 @@ class _TopBar extends StatelessWidget {
     return Container(
       height: 64,
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: const BoxDecoration(
-        color: AppColors.white,
-        border: Border(bottom: BorderSide(color: AppColors.line)),
+      // Filet doré en bas de la barre : rappel discret de la charte.
+      foregroundDecoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: AppColors.gold, width: 2)),
       ),
+      decoration: const BoxDecoration(color: AppColors.white),
       child: LayoutBuilder(
         builder: (context, c) {
           final w = c.maxWidth;
@@ -409,7 +446,18 @@ class _TopBar extends StatelessWidget {
                 const _ConflictBell(),
                 const SizedBox(width: 10),
               ],
-              _ProfileChip(compact: w < 720),
+              // L'avatar ouvre la page « Mon profil ».
+              Tooltip(
+                message: 'Mon profil',
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: () => navigateToSection(context, AppSection.profil),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: _ProfileChip(compact: w < 720),
+                  ),
+                ),
+              ),
               const SizedBox(width: 4),
               IconButton(
                 tooltip: 'Se déconnecter',

@@ -1,3 +1,11 @@
+/// Test d'intégration du stockage sécurisé des jetons.
+///
+/// Contrairement aux tests unitaires (qui simulent le stockage), ce test
+/// s'exécute sur un vrai appareil ou émulateur :
+///   flutter test integration_test -d <appareil>
+/// Il vérifie l'écriture, la relecture et la suppression de clés.
+library;
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';

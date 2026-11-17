@@ -345,7 +345,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
     child: Icon(
       Icons.meeting_room_rounded,
       size: size * 0.5,
-      color: AppColors.gold,
+      color: AppColors.goldDeep,
     ),
   );
 

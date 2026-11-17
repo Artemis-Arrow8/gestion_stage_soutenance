@@ -514,52 +514,161 @@ class _WeekChart extends StatelessWidget {
 class _StudentFolderCard extends StatelessWidget {
   const _StudentFolderCard({required this.profile});
 
-  /// Profil renvoyé par l'API (`student_number`, `folder_status`…).
+  /// Profil renvoyé par l'API (`folder_status`, `folder_company`,
+  /// `defense`…).
   final Map<String, dynamic> profile;
 
   @override
   Widget build(BuildContext context) {
     final statut = profile['folder_status']?.toString();
-    final matricule = profile['student_number']?.toString() ?? '';
-    return SgCard(
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: AppColors.goldSoft,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(
-              Icons.folder_shared_rounded,
-              color: AppColors.gold,
-            ),
+    final soutenance = profile['defense'] is Map
+        ? Map<String, dynamic>.from(profile['defense'] as Map)
+        : null;
+
+    return LayoutBuilder(
+      builder: (context, c) {
+        final dossier = _carteDossier(context, statut);
+        final carteSoutenance = _carteSoutenance(soutenance);
+        // Deux cartes côte à côte sur grand écran, empilées sinon.
+        if (c.maxWidth < 720) {
+          return Column(
+            children: [dossier, const SizedBox(height: 14), carteSoutenance],
+          );
+        }
+        return IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: dossier),
+              const SizedBox(width: 14),
+              Expanded(child: carteSoutenance),
+            ],
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
+        );
+      },
+    );
+  }
+
+  /// Carte « Mon dossier de stage » (ou invitation à le créer).
+  Widget _carteDossier(BuildContext context, String? statut) {
+    return SgCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _pastille(Icons.folder_shared_rounded),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Text(
                   'Mon dossier de stage',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  statut == null
-                      ? 'Aucun dossier ouvert pour la campagne en cours.'
-                      : 'Matricule $matricule',
-                  style: const TextStyle(fontSize: 12.5, color: AppColors.grey),
-                ),
-              ],
-            ),
+              ),
+              if (statut != null) SgStatusBadge(statut),
+            ],
           ),
-          if (statut != null) SgBadge(statut, tone: sgToneForStatus(statut)),
+          const SizedBox(height: 14),
+          if (statut == null) ...[
+            const Text(
+              'Aucun dossier pour la campagne en cours.',
+              style: TextStyle(fontSize: 13, color: AppColors.grey),
+            ),
+            const SizedBox(height: 12),
+            SgButton(
+              'Créer mon dossier',
+              icon: Icons.create_new_folder_outlined,
+              dense: true,
+              onPressed: () => navigateToSection(context, AppSection.documents),
+            ),
+          ] else ...[
+            Text(
+              profile['folder_company']?.toString() ?? '',
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              profile['folder_subject']?.toString() ?? '',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12.5, color: AppColors.grey),
+            ),
+          ],
         ],
       ),
     );
   }
+
+  /// Carte « Ma soutenance » : date, horaires, salle, jury, note validée.
+  Widget _carteSoutenance(Map<String, dynamic>? s) {
+    final debut = DateTime.tryParse(s?['slot_start']?.toString() ?? '')?.toLocal();
+    final fin = DateTime.tryParse(s?['slot_end']?.toString() ?? '')?.toLocal();
+    String heure(DateTime? d) => d == null
+        ? '--:--'
+        : '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    final note = s?['final_average']?.toString();
+
+    return SgCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _pastille(Icons.event_available_rounded),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Text(
+                  'Ma soutenance',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                ),
+              ),
+              if (s != null) SgStatusBadge(s['status']?.toString() ?? ''),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (s == null)
+            const Text(
+              'Pas encore planifiée : elle le sera dès que votre dossier '
+              'sera déclaré recevable.',
+              style: TextStyle(fontSize: 13, color: AppColors.grey),
+            )
+          else ...[
+            Text(
+              debut == null ? '—' : longDate(debut),
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${heure(debut)} – ${heure(fin)} · ${s['room_name'] ?? ''} · '
+              '${s['jury_name'] ?? ''}',
+              style: const TextStyle(fontSize: 12.5, color: AppColors.grey),
+            ),
+            // Note finale affichée seulement une fois validée.
+            if (note != null) ...[
+              const SizedBox(height: 10),
+              SgBadge(
+                'Note finale : ${note.replaceAll('.', ',')} / 20',
+                tone: SgTone.gold,
+                icon: Icons.workspace_premium_rounded,
+                dot: false,
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Pastille d'icône dorée.
+  Widget _pastille(IconData icon) => Container(
+    width: 44,
+    height: 44,
+    decoration: BoxDecoration(
+      color: AppColors.goldSoft,
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Icon(icon, color: AppColors.goldDeep),
+  );
 }
 
 // ===========================================================================
@@ -628,7 +737,7 @@ class _QuickActions extends StatelessWidget {
               color: AppColors.goldSoft,
               borderRadius: BorderRadius.circular(11),
             ),
-            child: Icon(s.iconActive, size: 20, color: AppColors.gold),
+            child: Icon(s.iconActive, size: 20, color: AppColors.goldDeep),
           ),
           const SizedBox(width: 14),
           Expanded(
