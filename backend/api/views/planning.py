@@ -137,11 +137,15 @@ class JuryViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Restreint un membre du jury à ses propres jurys."""
+        # `super().get_queryset()` renvoie une COPIE fraîche du queryset de
+        # classe : sans elle, le résultat de la première liste resterait en
+        # cache dans le processus et les nouvelles lignes seraient invisibles.
+        base = super().get_queryset()
         if get_user_role(self.request.user) == 'jury':
-            return self.queryset.filter(
+            return base.filter(
                 members__account__user=self.request.user
             ).distinct()
-        return self.queryset
+        return base
 
 
 class JuryMemberViewSet(viewsets.ModelViewSet):
@@ -157,9 +161,13 @@ class JuryMemberViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Restreint un membre du jury à sa propre fiche."""
+        # `super().get_queryset()` renvoie une COPIE fraîche du queryset de
+        # classe : sans elle, le résultat de la première liste resterait en
+        # cache dans le processus et les nouvelles lignes seraient invisibles.
+        base = super().get_queryset()
         if get_user_role(self.request.user) == 'jury':
-            return self.queryset.filter(account__user=self.request.user)
-        return self.queryset
+            return base.filter(account__user=self.request.user)
+        return base
 
 
 class DefenseViewSet(viewsets.ModelViewSet):
@@ -176,11 +184,15 @@ class DefenseViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Restreint un membre du jury aux soutenances de ses jurys."""
+        # `super().get_queryset()` renvoie une COPIE fraîche du queryset de
+        # classe : sans elle, le résultat de la première liste resterait en
+        # cache dans le processus et les nouvelles lignes seraient invisibles.
+        base = super().get_queryset()
         if get_user_role(self.request.user) == 'jury':
-            return self.queryset.filter(
+            return base.filter(
                 jury__members__account__user=self.request.user
             ).distinct()
-        return self.queryset
+        return base
 
     def _enregistrer_soutenance(self, serializer):
         """

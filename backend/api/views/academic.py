@@ -93,18 +93,22 @@ class InternshipFolderViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Filtre les dossiers visibles selon le rôle de l'appelant."""
+        # `super().get_queryset()` renvoie une COPIE fraîche du queryset de
+        # classe : sans elle, le résultat de la première liste resterait en
+        # cache dans le processus et les nouvelles lignes seraient invisibles.
+        base = super().get_queryset()
         role = get_user_role(self.request.user)
         student = etudiant_du_compte(self.request.user)
         if role in ('admin', 'responsible'):
-            return self.queryset
+            return base
         if role == 'supervisor':
             # `distinct()` évite les doublons dus à la jointure d'affectation.
-            return self.queryset.filter(
+            return base.filter(
                 supervisor_assignments__user=self.request.user
             ).distinct()
         if student is None:
-            return self.queryset.none()
-        return self.queryset.filter(student=student)
+            return base.none()
+        return base.filter(student=student)
 
     def perform_create(self, serializer):
         """
@@ -161,17 +165,21 @@ class DocumentVersionViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         """Restreint les versions visibles au périmètre du rôle."""
+        # `super().get_queryset()` renvoie une COPIE fraîche du queryset de
+        # classe : sans elle, le résultat de la première liste resterait en
+        # cache dans le processus et les nouvelles lignes seraient invisibles.
+        base = super().get_queryset()
         role = get_user_role(self.request.user)
         student = etudiant_du_compte(self.request.user)
         if role in ('admin', 'responsible'):
-            return self.queryset
+            return base
         if role == 'supervisor':
-            return self.queryset.filter(
+            return base.filter(
                 folder__supervisor_assignments__user=self.request.user
             ).distinct()
         if student is None:
-            return self.queryset.none()
-        return self.queryset.filter(folder__student=student)
+            return base.none()
+        return base.filter(folder__student=student)
 
 
 class ReviewViewSet(viewsets.ModelViewSet):
@@ -204,24 +212,28 @@ class ReviewViewSet(viewsets.ModelViewSet):
         Lève :
             ValidationError : `document_version_id` non entier (HTTP 400).
         """
+        # `super().get_queryset()` renvoie une COPIE fraîche du queryset de
+        # classe : sans elle, le résultat de la première liste resterait en
+        # cache dans le processus et les nouvelles lignes seraient invisibles.
+        base = super().get_queryset()
         role = get_user_role(self.request.user)
         if role == 'admin':
-            queryset = self.queryset
+            queryset = base
         elif role == 'supervisor':
             # Un encadreur ne voit que ses avis, sur des dossiers affectés.
-            queryset = self.queryset.filter(
+            queryset = base.filter(
                 author=self.request.user,
                 document_version__folder__supervisor_assignments__user=self.request.user
             ).distinct()
         elif role == 'student':
             student = etudiant_du_compte(self.request.user)
             if student is None:
-                return self.queryset.none()
-            queryset = self.queryset.filter(
+                return base.none()
+            queryset = base.filter(
                 document_version__folder__student=student
             )
         else:
-            return self.queryset.none()
+            return base.none()
 
         document_id = self.request.query_params.get('document_version_id')
         if document_id is not None:

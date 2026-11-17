@@ -24,6 +24,9 @@ staticfiles/
 # Les sauvegardes peuvent contenir des données personnelles et des secrets.
 backups/
 
+# Jeu de données fictives : contient les empreintes des mots de passe démo.
+database/donnees_fictives.sql
+
 # Flutter et Dart
 .dart_tool/
 .packages
