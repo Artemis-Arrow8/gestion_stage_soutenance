@@ -26,6 +26,7 @@ backups/
 
 # Jeu de données fictives : contient les empreintes des mots de passe démo.
 database/donnees_fictives.sql
+database/comptes_utilisateurs.sql
 
 # Flutter et Dart
 .dart_tool/

@@ -1,19 +1,198 @@
 """
 Configuration du site d'administration Django (/admin/) pour SGSUS.
 
-Seules les tables de liaison gérées par Django y sont exposées : elles
-permettent à un administrateur de rattacher un compte à une fiche étudiante,
-à un membre de jury, ou d'affecter un encadreur à un dossier.
+Toutes les tables métier y sont exposées afin qu'un superutilisateur puisse
+consulter et corriger les données sans passer par pgAdmin :
+    * référentiels : campagnes, étudiants, salles, jurys et membres ;
+    * suivi : dossiers de stage, versions de documents, avis ;
+    * planification : soutenances et évaluations ;
+    * liaisons de comptes : compte ↔ étudiant, compte ↔ membre de jury,
+      encadreur ↔ dossier.
+Les comptes et groupes (rôles) sont gérés par la section « Authentification
+et autorisation » fournie par Django.
 """
 
 from django.contrib import admin
 
-from .models import FolderSupervisor, JuryMemberAccount, StudentAccount
+from .models import (
+    Assessment,
+    Campaign,
+    Defense,
+    DocumentVersion,
+    FolderSupervisor,
+    InternshipFolder,
+    Jury,
+    JuryMember,
+    JuryMemberAccount,
+    Review,
+    Room,
+    Student,
+    StudentAccount,
+)
 
+# Titres affichés dans l'interface d'administration.
+admin.site.site_header = 'Administration SGSUS'
+admin.site.site_title = 'SGSUS'
+admin.site.index_title = 'Gestion des stages et des soutenances'
+
+
+# =========================================================================
+# 1. Référentiels
+# =========================================================================
+
+@admin.register(Campaign)
+class CampaignAdmin(admin.ModelAdmin):
+    """Campagnes académiques ; une seule devrait être active à la fois."""
+
+    list_display = ('academic_year', 'is_active', 'created_at')
+    list_filter = ('is_active',)
+    search_fields = ('academic_year',)
+
+
+@admin.register(Student)
+class StudentAdmin(admin.ModelAdmin):
+    """Fiches étudiantes (matricule, nom, e-mail)."""
+
+    list_display = ('student_number', 'full_name', 'email')
+    search_fields = ('student_number', 'full_name', 'email')
+    ordering = ('student_number',)
+
+
+@admin.register(Room)
+class RoomAdmin(admin.ModelAdmin):
+    """Catalogue des salles de soutenance."""
+
+    list_display = ('name', 'capacity', 'is_active')
+    list_filter = ('is_active',)
+    search_fields = ('name',)
+    ordering = ('name',)
+
+
+class JuryMemberInline(admin.TabularInline):
+    """Membres affichés et modifiables directement dans la fiche du jury."""
+
+    model = JuryMember
+    extra = 0
+
+
+@admin.register(Jury)
+class JuryAdmin(admin.ModelAdmin):
+    """Jurys de soutenance, avec leurs membres en tableau intégré."""
+
+    list_display = ('name', 'is_complete', 'nombre_membres')
+    list_filter = ('is_complete',)
+    search_fields = ('name', 'members__member_name')
+    ordering = ('name',)
+    inlines = [JuryMemberInline]
+
+    @admin.display(description='Membres')
+    def nombre_membres(self, jury):
+        """Retourne le nombre de membres du jury."""
+        return jury.members.count()
+
+
+@admin.register(JuryMember)
+class JuryMemberAdmin(admin.ModelAdmin):
+    """Membres de jury (président, rapporteur, examinateur)."""
+
+    list_display = ('member_name', 'role_in_jury', 'jury')
+    list_filter = ('role_in_jury', 'jury')
+    search_fields = ('member_name', 'jury__name')
+    list_select_related = ('jury',)
+
+
+# =========================================================================
+# 2. Dossiers, documents et avis
+# =========================================================================
+
+@admin.register(InternshipFolder)
+class InternshipFolderAdmin(admin.ModelAdmin):
+    """Dossiers de stage ; le statut « recevable » rend le dossier planifiable."""
+
+    list_display = ('id', 'student', 'company_name', 'status', 'campaign', 'created_at')
+    list_filter = ('status', 'campaign')
+    search_fields = (
+        'company_name',
+        'subject',
+        'student__full_name',
+        'student__student_number',
+    )
+    list_select_related = ('student', 'campaign')
+
+
+@admin.register(DocumentVersion)
+class DocumentVersionAdmin(admin.ModelAdmin):
+    """Versions de rapports déposées (le fichier est sur le disque du serveur)."""
+
+    list_display = ('id', 'dossier', 'version_number', 'file_path', 'uploaded_at')
+    search_fields = ('folder__student__full_name', 'folder__company_name')
+    list_select_related = ('folder', 'folder__student')
+
+    @admin.display(description='Dossier', ordering='folder')
+    def dossier(self, document):
+        """Retourne le libellé du dossier auquel appartient la version."""
+        return document.folder
+
+
+@admin.register(Review)
+class ReviewAdmin(admin.ModelAdmin):
+    """Avis d'encadrement sur une version de document."""
+
+    list_display = ('id', 'document_version', 'author', 'author_role', 'decision', 'created_at')
+    list_filter = ('decision', 'author_role')
+    search_fields = ('comments', 'author__username')
+    list_select_related = ('author', 'document_version')
+
+
+# =========================================================================
+# 3. Planification et évaluations
+# =========================================================================
+
+@admin.register(Defense)
+class DefenseAdmin(admin.ModelAdmin):
+    """
+    Soutenances planifiées.
+
+    Les contraintes PostgreSQL interdisent toujours les doubles réservations
+    d'une salle ou d'un jury, même lors d'une saisie depuis cette page.
+    """
+
+    list_display = ('id', 'etudiant', 'jury', 'room_name', 'debut', 'fin', 'status')
+    list_filter = ('status', 'room_name', 'jury')
+    search_fields = ('folder__student__full_name', 'room_name', 'jury__name')
+    list_select_related = ('folder', 'folder__student', 'jury')
+
+    @admin.display(description='Étudiant')
+    def etudiant(self, defense):
+        """Retourne le nom de l'étudiant qui soutient."""
+        return defense.folder.student.full_name
+
+    @admin.display(description='Début (UTC)')
+    def debut(self, defense):
+        """Retourne le début du créneau."""
+        return defense.slot_range.lower if defense.slot_range else None
+
+    @admin.display(description='Fin (UTC)')
+    def fin(self, defense):
+        """Retourne la fin du créneau."""
+        return defense.slot_range.upper if defense.slot_range else None
+
+
+@admin.register(Assessment)
+class AssessmentAdmin(admin.ModelAdmin):
+    """Notes (sur 20) et validation finale des soutenances."""
+
+    list_display = ('id', 'defense', 'report_grade', 'oral_grade', 'final_average', 'is_approved')
+    list_filter = ('is_approved',)
+
+
+# =========================================================================
+# 4. Liaisons entre comptes et données métier
+# =========================================================================
 
 @admin.register(StudentAccount)
 class StudentAccountAdmin(admin.ModelAdmin):
-    """Permet aux administrateurs d'associer les comptes aux étudiants."""
+    """Associe un compte de connexion à une fiche étudiante."""
 
     list_display = ('user', 'student')
     # Recherche par identifiant de connexion ou par données de la fiche.
@@ -29,7 +208,7 @@ class StudentAccountAdmin(admin.ModelAdmin):
 
 @admin.register(JuryMemberAccount)
 class JuryMemberAccountAdmin(admin.ModelAdmin):
-    """Permet à l'administrateur d'associer un compte à un membre du jury."""
+    """Associe un compte de connexion à un membre du jury."""
 
     list_display = ('user', 'jury_member')
     search_fields = (
@@ -42,7 +221,7 @@ class JuryMemberAccountAdmin(admin.ModelAdmin):
 
 @admin.register(FolderSupervisor)
 class FolderSupervisorAdmin(admin.ModelAdmin):
-    """Gère les dossiers précis accessibles à chaque encadreur."""
+    """Affecte un encadreur aux dossiers précis qu'il peut consulter."""
 
     list_display = ('user', 'folder')
     search_fields = (
