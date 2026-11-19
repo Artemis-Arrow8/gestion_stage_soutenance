@@ -172,8 +172,8 @@ void main() {
       expect(libelleStatut('planifie'), 'Proposée');
       expect(libelleStatut('a_corriger'), 'À corriger');
       expect(libelleStatut('publie'), 'Publiée');
-      expect(libelleStatut('recevable'), 'Recevable');
-      expect(libelleStatut('rejete'), 'Rejeté');
+      expect(libelleStatut('recevable'), 'Prêt pour la soutenance');
+      expect(libelleStatut('rejete'), 'Refusé');
       // Statut inconnu : affiché avec une majuscule.
       expect(libelleStatut('special'), 'Special');
     });

@@ -17,6 +17,7 @@ from api.models import (
     Review,
     Student,
 )
+from api.roles import get_user_role
 
 
 class CampaignSerializer(serializers.ModelSerializer):
@@ -48,6 +49,17 @@ class InternshipFolderSerializer(serializers.ModelSerializer):
 
     confidentialite = serializers.SerializerMethodField()
 
+    # --- Champs d'affichage, en lecture seule ------------------------------
+    # Ils permettent à l'écran « Dossiers » de dire d'un coup d'œil À QUI
+    # appartient le dossier, QUELLE version attend une décision et QUELLE a
+    # été la dernière décision, sans requête supplémentaire par dossier.
+    student_name = serializers.CharField(source='student.full_name', read_only=True)
+    student_number = serializers.CharField(source='student.student_number', read_only=True)
+    nombre_versions = serializers.SerializerMethodField()
+    derniere_version = serializers.SerializerMethodField()
+    dernier_avis = serializers.SerializerMethodField()
+    derniere_etape = serializers.SerializerMethodField()
+
     class Meta:
         model = InternshipFolder
         fields = '__all__'
@@ -57,6 +69,97 @@ class InternshipFolderSerializer(serializers.ModelSerializer):
         """Niveau de confidentialité du dossier (standard par défaut)."""
         reglage = getattr(dossier, 'confidentialite', None)
         return reglage.niveau if reglage is not None else 'standard'
+
+    # Les méthodes ci-dessous parcourent `.all()` en Python : avec le
+    # `prefetch_related` de la vue, aucune requête n'est faite par dossier.
+
+    @staticmethod
+    def _versions(dossier):
+        """Versions du rapport, de la plus ancienne à la plus récente."""
+        return sorted(dossier.document_versions.all(),
+                      key=lambda v: (v.version_number, v.pk))
+
+    @staticmethod
+    def _date(valeur):
+        """Date au format ISO 8601 de l'API (None conservé)."""
+        return serializers.DateTimeField().to_representation(valeur) if valeur else None
+
+    def get_nombre_versions(self, dossier):
+        """Nombre de versions déposées du rapport."""
+        return len(self._versions(dossier))
+
+    def get_derniere_version(self, dossier):
+        """Dernière version déposée : {id, version_number, uploaded_at} ou None."""
+        versions = self._versions(dossier)
+        if not versions:
+            return None
+        version = versions[-1]
+        return {
+            'id': version.pk,
+            'version_number': version.version_number,
+            'uploaded_at': self._date(version.uploaded_at),
+        }
+
+    def _avis_visible(self, avis):
+        """
+        Applique au dernier avis la MÊME règle de lecture que /api/reviews/
+        (matrice des droits inchangée) : administrateur et étudiant
+        propriétaire voient tout ; un encadreur ne voit que ses propres avis ;
+        les autres rôles ne voient pas le détail des avis.
+        """
+        request = self.context.get('request')
+        if request is None:
+            return False
+        # Rôle calculé UNE fois par réponse : en liste, la même instance du
+        # sérialiseur sert pour tous les dossiers (pas de requête par ligne).
+        if not hasattr(self, '_role_appelant'):
+            self._role_appelant = get_user_role(request.user)
+        role = self._role_appelant
+        if role in ('admin', 'student'):
+            return True
+        if role == 'supervisor':
+            return avis.author_id == request.user.pk
+        return False
+
+    def get_dernier_avis(self, dossier):
+        """
+        Avis le plus récent, toutes versions confondues (ex. la demande de
+        correction reste lisible après le dépôt de la version corrigée) :
+        {decision, comments, author_role, version_number, created_at} ou None.
+        """
+        avis = [
+            (version.version_number, a)
+            for version in self._versions(dossier)
+            for a in version.reviews.all()
+        ]
+        if not avis:
+            return None
+        numero, dernier = max(avis, key=lambda paire: (paire[1].created_at, paire[1].pk))
+        if not self._avis_visible(dernier):
+            return None
+        return {
+            'decision': dernier.decision,
+            'comments': dernier.comments or '',
+            'author_role': dernier.author_role,
+            'version_number': numero,
+            'created_at': self._date(dernier.created_at),
+        }
+
+    def get_derniere_etape(self, dossier):
+        """
+        Dernière transition enregistrée (ex. motif d'un refus) :
+        {evenement, statut_apres, motif, created_at} ou None.
+        """
+        lignes = list(dossier.historique.all())
+        if not lignes:
+            return None
+        derniere = max(lignes, key=lambda h: (h.created_at, h.pk))
+        return {
+            'evenement': derniere.evenement,
+            'statut_apres': derniere.statut_apres,
+            'motif': derniere.motif,
+            'created_at': self._date(derniere.created_at),
+        }
 
 
 class DocumentVersionSerializer(serializers.ModelSerializer):

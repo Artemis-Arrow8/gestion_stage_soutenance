@@ -149,7 +149,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text("Dossiers affectés et avis d'encadrement"),
+      find.text('Rapports à examiner'),
       findsOneWidget,
     );
   });

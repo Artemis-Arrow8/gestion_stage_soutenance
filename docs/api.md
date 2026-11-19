@@ -95,7 +95,7 @@ Rôles : **A** administrateur, **R** responsable, **E** encadreur, **J** jury, *
 | `GET/POST/PATCH /api/campaigns/` | A R | Campagnes |
 | `GET/POST /api/students/` | A R | Fiches étudiantes |
 | `POST /api/students/importer/` | A R | Import CSV `{campagne, csv` ou fichier `fichier, simulation}` → rapport `{etudiants_crees, etudiants_existants, dossiers_crees, dossiers_existants, erreurs[]}` |
-| `GET/POST/PATCH /api/internship-folders/` | A R S (E en lecture) | Dossiers ; `status` en **lecture seule** ; un seul dossier par étudiant et par campagne (409 F01) |
+| `GET/POST/PATCH /api/internship-folders/` | A R S (E en lecture) | Dossiers ; `status` en **lecture seule** ; un seul dossier par étudiant et par campagne (409 F01). Champs d'affichage en lecture seule : `student_name`, `student_number`, `nombre_versions`, `derniere_version {id, version_number, uploaded_at}`, `dernier_avis {decision, comments, author_role, version_number, created_at}` (même règle de lecture que `/api/reviews/`, sinon `null`), `derniere_etape {evenement, statut_apres, motif, created_at}` |
 | `POST /api/internship-folders/{id}/soumettre/` | S | brouillon ou à corriger → soumis (exige un rapport) |
 | `POST /api/internship-folders/{id}/autoriser/` | A R | validé → recevable (exige l'avis favorable sur la dernière version) |
 | `POST /api/internship-folders/{id}/refuser/` | A R | `{motif}` → rejeté |

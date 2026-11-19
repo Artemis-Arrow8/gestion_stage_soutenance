@@ -2,6 +2,8 @@
 /// rapports PDF et avis d'encadrement.
 library;
 
+import 'dart:typed_data';
+
 import 'package:file_picker/file_picker.dart';
 
 import '../core/network/api_service.dart';
@@ -144,6 +146,39 @@ class DocumentService {
       if (comments.trim().isNotEmpty) 'comments': comments.trim(),
     });
     return ApiService.requireObject(data);
+  }
+
+  /// Avis visibles sur TOUTES les versions [versionIds] d'un dossier, en un
+  /// seul appel, regroupés par version (identifiant → avis, du plus ancien
+  /// au plus récent). Le serveur ne renvoie que les avis que le compte a le
+  /// droit de lire.
+  Future<Map<int, List<Map<String, dynamic>>>> getReviewsParVersion(
+    Iterable<int> versionIds,
+  ) async {
+    final ids = versionIds.toSet();
+    final tous = await api.getList('reviews/');
+    final groupes = <int, List<Map<String, dynamic>>>{};
+    for (final avis in tous) {
+      final version = int.tryParse(avis['document_version']?.toString() ?? '');
+      if (version != null && ids.contains(version)) {
+        groupes.putIfAbsent(version, () => []).add(avis);
+      }
+    }
+    for (final liste in groupes.values) {
+      liste.sort(
+        (a, b) => (a['created_at'] ?? '').toString().compareTo(
+          (b['created_at'] ?? '').toString(),
+        ),
+      );
+    }
+    return groupes;
+  }
+
+  /// Contenu brut du PDF [documentId], pour l'afficher (voir
+  /// `core/pdf/visionneuse_pdf.dart`). Chaque accès est journalisé par le
+  /// serveur ; un rapport confidentiel peut être refusé (message explicite).
+  Future<Uint8List> telechargerOctets(int documentId) {
+    return api.getBytes('documents/download/$documentId/');
   }
 
   /// Télécharge le PDF [documentId] puis propose de l'enregistrer.

@@ -5,6 +5,10 @@
 ///      (prochaine soutenance, état du dossier…), qui s'ouvre au toucher ;
 ///   2. une grille de grandes cartes « Vos espaces » : une carte par module,
 ///      avec une information en direct ; toucher la carte ouvre le module.
+/// Ce qui attend l'utilisateur est dit en toutes lettres avec un bouton
+/// (« 3 rapports attendent votre avis », « Déposez votre rapport ») : les
+/// règles viennent de `core/utils/etapes_dossier.dart`, comme dans l'écran
+/// des dossiers, pour que l'accueil et l'écran disent la même chose.
 /// Pas de tableaux ni de listes entassées : le détail se trouve dans chaque
 /// module. Les cartes sont larges pour un usage confortable à une main.
 library;
@@ -14,10 +18,12 @@ import 'package:provider/provider.dart';
 
 import '../core/theme/app_theme.dart';
 import '../core/utils/dates.dart';
+import '../core/utils/etapes_dossier.dart';
 import '../models/defense.dart';
 import '../providers/auth_provider.dart';
 import '../providers/planning_store.dart';
 import '../services/conflict_report.dart';
+import '../services/document_service.dart';
 import '../services/planning_service.dart';
 import '../widgets/app_shell.dart';
 import '../widgets/ui_kit.dart';
@@ -33,8 +39,12 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-/// État du tableau de bord : déclenche le chargement du planning.
+/// État du tableau de bord : charge le planning et les dossiers de stage.
 class _DashboardScreenState extends State<DashboardScreen> {
+  /// Dossiers de stage visibles (pour « à traiter »), `null` tant qu'ils ne
+  /// sont pas chargés ou si le chargement a échoué (l'accueil reste utile).
+  List<Map<String, dynamic>>? _dossiers;
+
   @override
   void initState() {
     super.initState();
@@ -48,12 +58,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _voitPlanning(AuthProvider auth) =>
       auth.canManage || auth.role == 'jury';
 
-  /// Charge (ou recharge si [force]) le planning partagé.
+  /// Vrai si le rôle courant suit des dossiers de stage.
+  bool _suitDossiers(AuthProvider auth) => const {
+    'student',
+    'supervisor',
+    'admin',
+    'responsible',
+  }.contains(auth.role);
+
+  /// Charge (ou recharge si [force]) le planning et les dossiers.
   Future<void> _load({required bool force}) async {
     final auth = context.read<AuthProvider>();
     // Le profil (dossier, soutenance de l'étudiant) est aussi rafraîchi.
     if (force) await auth.fetchUserProfile();
-    if (!mounted || !_voitPlanning(auth)) return;
+    if (!mounted) return;
+    await Future.wait([_chargerPlanning(auth, force), _chargerDossiers(auth)]);
+  }
+
+  /// Charge les dossiers de stage ; une erreur est silencieuse (l'accueil
+  /// affiche alors un texte général au lieu du nombre de dossiers).
+  Future<void> _chargerDossiers(AuthProvider auth) async {
+    if (!_suitDossiers(auth)) return;
+    try {
+      final dossiers = await DocumentService(auth.api).getFolders();
+      if (mounted) setState(() => _dossiers = dossiers);
+    } catch (_) {
+      // Hors ligne ou serveur indisponible : rien de bloquant ici.
+    }
+  }
+
+  /// Charge (ou recharge si [force]) le planning partagé.
+  Future<void> _chargerPlanning(AuthProvider auth, bool force) async {
+    if (!_voitPlanning(auth)) return;
     final service = PlanningService(auth.api);
     if (force) {
       try {
@@ -92,6 +128,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 auth: auth,
                 defenses: defenses,
                 loading: loading,
+                dossiers: _dossiers,
               );
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -101,6 +138,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       message: 'Le planning n’a pas pu être chargé : $error',
                       tone: SgTone.danger,
                     ),
+                    const SizedBox(height: 16),
+                  ],
+                  // Personnel : décisions en attente, avant le planning.
+                  if (auth.canManage && etat.aTraiter > 0) ...[
+                    _CarteAFaire(nombre: etat.aTraiter),
                     const SizedBox(height: 16),
                   ],
                   _CarteUne(etat: etat),
@@ -131,6 +173,7 @@ class _EtatAccueil {
     required this.auth,
     required List<Defense> defenses,
     required this.loading,
+    this.dossiers,
   }) {
     final now = DateTime.now();
     final debutJour = DateTime(now.year, now.month, now.day);
@@ -147,7 +190,22 @@ class _EtatAccueil {
         .where((d) => parseDefenseDate(d.date) == debutJour)
         .length;
     conflits = auth.canManage ? ConflictScanner.scan(defenses).length : 0;
+    aTraiter = dossiers == null
+        ? 0
+        : dossiers!.where((d) => situationDossier(auth.role, d).aTraiter).length;
+    situationEtudiant = auth.role == 'student' && (dossiers?.isNotEmpty ?? false)
+        ? situationDossier('student', dossiers!.first)
+        : null;
   }
+
+  /// Dossiers de stage visibles, ou `null` s'ils ne sont pas chargés.
+  final List<Map<String, dynamic>>? dossiers;
+
+  /// Nombre de dossiers qui attendent une action de l'utilisateur.
+  late final int aTraiter;
+
+  /// Étudiant : situation de son dossier (prochaine étape), sinon `null`.
+  late final SituationDossier? situationEtudiant;
 
   /// Session courante (rôle, profil).
   final AuthProvider auth;
@@ -265,12 +323,21 @@ class _CarteUne extends StatelessWidget {
         ? '--:--'
         : '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
     final note = s?['final_average']?.toString();
+    // Prochaine étape du dossier, dite en toutes lettres sur un bouton.
+    final situation = etat.situationEtudiant;
 
     return _CadreUne(
       surtitre: 'MON STAGE',
       titre: user['folder_company']?.toString() ?? 'Mon dossier',
       texte: user['folder_subject']?.toString() ?? '',
       onTap: () => navigateToSection(context, AppSection.profil),
+      action: situation != null && situation.aTraiter
+          ? SgButton(
+              situation.titre,
+              icon: Icons.arrow_forward_rounded,
+              onPressed: () => navigateToSection(context, AppSection.documents),
+            )
+          : null,
       pastilles: [
         SgStatusBadge(statut),
         if (note != null)
@@ -290,17 +357,85 @@ class _CarteUne extends StatelessWidget {
     );
   }
 
-  /// Encadreur : accès direct aux dossiers à suivre.
+  /// Encadreur : nombre de rapports qui attendent son avis, et un bouton.
   Widget _uneEncadreur(BuildContext context) {
+    final n = etat.aTraiter;
+    final (titre, texte) = switch (etat.dossiers) {
+      null => (
+        'Vos rapports à examiner',
+        'Lisez les rapports envoyés par vos étudiants et donnez votre avis.',
+      ),
+      _ when n == 0 => (
+        'Aucun rapport en attente',
+        'Les rapports envoyés par vos étudiants apparaîtront ici.',
+      ),
+      _ when n == 1 => (
+        '1 rapport attend votre avis',
+        'Lisez-le, puis acceptez-le ou demandez des corrections.',
+      ),
+      _ => (
+        '$n rapports attendent votre avis',
+        'Lisez-les, puis acceptez-les ou demandez des corrections.',
+      ),
+    };
     return _CadreUne(
       surtitre: 'ENCADREMENT',
-      titre: 'Vos dossiers à suivre',
-      texte:
-          'Consultez les rapports déposés et donnez vos avis de recevabilité.',
+      titre: titre,
+      texte: texte,
       action: SgButton(
-        'Ouvrir mes dossiers',
-        icon: Icons.folder_open_rounded,
+        n > 0 ? 'Examiner les rapports' : 'Voir mes dossiers',
+        icon: Icons.arrow_forward_rounded,
         onPressed: () => navigateToSection(context, AppSection.documents),
+      ),
+    );
+  }
+}
+
+/// Personnel : rappel des dossiers qui attendent une décision (autoriser
+/// ou refuser la soutenance), avec un accès direct à l'écran des dossiers.
+class _CarteAFaire extends StatelessWidget {
+  const _CarteAFaire({required this.nombre});
+
+  /// Nombre de dossiers en attente de décision.
+  final int nombre;
+
+  @override
+  Widget build(BuildContext context) {
+    return SgCard(
+      padding: const EdgeInsets.all(16),
+      onTap: () => navigateToSection(context, AppSection.documents),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.goldSoft,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.touch_app_rounded, color: AppColors.goldDeep),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  nombre == 1
+                      ? '1 dossier attend votre décision'
+                      : '$nombre dossiers attendent votre décision',
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  'Autorisez la soutenance ou refusez le dossier.',
+                  style: TextStyle(fontSize: 12.5, color: AppColors.grey),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.arrow_forward_rounded, color: AppColors.goldDeep),
+        ],
       ),
     );
   }
@@ -462,8 +597,7 @@ class _GrilleEspaces extends StatelessWidget {
   String _titre(AppSection s) => switch (s) {
     AppSection.documents when etat.role == 'student' =>
       'Mon dossier et mes documents',
-    AppSection.documents when etat.role == 'supervisor' =>
-      'Dossiers affectés et avis d\'encadrement',
+    AppSection.documents when etat.role == 'supervisor' => 'Rapports à examiner',
     AppSection.planning when etat.role == 'jury' => 'Mon planning de jury',
     AppSection.campaigns => 'Gestion des campagnes',
     AppSection.accounts => 'Comptes et rôles',
@@ -489,6 +623,18 @@ class _GrilleEspaces extends StatelessWidget {
       AppSection.jury when PlanningStore.juryMembers.isNotEmpty => (
         '${PlanningStore.juryMembers.length} membre(s) de jury',
         null,
+      ),
+      AppSection.documents when etat.role != 'student' && etat.aTraiter > 0 => (
+        etat.role == 'supervisor'
+            ? '${etat.aTraiter} à examiner'
+            : '${etat.aTraiter} à décider',
+        SgTone.gold,
+      ),
+      // Les chiffres utiles des dossiers sont ici, sur l'accueil, plutôt
+      // qu'en cartes muettes en haut de l'écran des dossiers.
+      AppSection.documents when etat.role != 'student' && etat.dossiers != null => (
+        '${etat.dossiers!.length} dossier(s) · rien à traiter',
+        SgTone.success,
       ),
       AppSection.documents
           when etat.role == 'student' &&

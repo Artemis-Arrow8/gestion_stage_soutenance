@@ -77,13 +77,15 @@ const Map<String, String> _libellesStatuts = {
   'reporte': 'Reportée',
   'termine': 'Tenue',
   'annule': 'Annulée',
-  // Dossiers de stage (brouillon → soumis → à corriger | validé → recevable)
+  // Dossiers de stage, en mots de tous les jours (une personne non formée
+  // doit comprendre sans lexique) : brouillon → en attente d'avis →
+  // à corriger | accepté → prêt pour la soutenance, ou refusé.
   'brouillon': 'Brouillon',
-  'soumis': 'Soumis',
+  'soumis': 'En attente d’avis',
   'a_corriger': 'À corriger',
-  'recevable': 'Recevable',
-  'valide': 'Validé',
-  'rejete': 'Rejeté',
+  'recevable': 'Prêt pour la soutenance',
+  'valide': 'Accepté',
+  'rejete': 'Refusé',
   // Convocations et procès-verbaux
   'active': 'Active',
   'remplacee': 'Remplacée',

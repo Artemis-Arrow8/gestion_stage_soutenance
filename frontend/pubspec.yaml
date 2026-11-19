@@ -25,6 +25,10 @@ dependencies:
 
   # Requêtes HTTP vers l'API Django REST Framework
   http: ^1.2.0
+
+  # API du navigateur (ouverture d'un rapport PDF dans un nouvel onglet) ;
+  # déjà présent via Flutter Web, rendu explicite car utilisé directement.
+  web: ^1.1.2
   file_picker: 13.3.2
   material_ui: ^1.11.0
 

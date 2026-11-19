@@ -1,16 +1,29 @@
-/// Gestion documentaire : dossiers de stage, versions des rapports PDF et
-/// avis des encadreurs.
+/// Dossiers de stage et rapports : écran conçu pour être compris SANS
+/// formation.
 ///
-/// Le contenu visible dépend du rôle (filtré par le serveur) :
-/// * étudiant : ses dossiers, dépôt de nouvelles versions, soumission ;
-/// * encadreur : dossiers affectés, consultation et avis pédagogique (qui
-///   fait passer un dossier soumis à « validé » ou « à corriger ») ;
-/// * personnel : tous les dossiers ; autorise la soutenance, refuse ou
-///   rouvre un dossier avec motif, règle la confidentialité du rapport.
+/// Règles d'ergonomie appliquées :
+/// 1. **Chaque dossier est une carte toujours visible** (rien à déplier) :
+///    qui (nom de l'étudiant), quoi (entreprise, sujet), où on en est (une
+///    phrase en mots simples + une barre de 4 étapes).
+/// 2. **Un gros bouton par décision possible, et seulement celles-là** :
+///    l'étudiant voit « Déposer mon rapport » puis « Envoyer à mon
+///    encadreur » ; l'encadreur voit « Lire le rapport », « Accepter le
+///    rapport » et « Demander des corrections » ; le responsable voit
+///    « Autoriser la soutenance » et « Refuser le dossier ». Les choix
+///    viennent de `core/utils/etapes_dossier.dart`.
+/// 3. **Ce qui attend l'utilisateur est en haut** (« À traiter
+///    maintenant »), le reste en dessous.
+/// 4. **Chaque décision est confirmée** par une fenêtre qui dit ce qui va se
+///    passer ; un refus ou une demande de corrections exige un commentaire,
+///    pour que la personne concernée sache quoi faire.
+/// 5. **En haut, un mode d'emploi en 3 petites cartes** (selon le rôle) et,
+///    pour l'encadreur et le personnel, des **compteurs cliquables** qui
+///    filtrent la liste (À traiter, En cours, Prêts, Refusés, Tous).
+/// 6. Les actions rares (confidentialité, anciennes versions, historique)
+///    sont rangées dans « Plus d'actions et historique ».
 ///
 /// Le statut ne se choisit jamais directement : il évolue par les étapes
-/// du chapitre 4 (le serveur refuse toute étape sautée). Chaque étape est
-/// visible dans l'historique du dossier.
+/// du chapitre 4 et le serveur refuse toute étape sautée (409).
 library;
 
 import 'package:file_picker/file_picker.dart';
@@ -18,7 +31,9 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../core/network/api_service.dart';
+import '../core/pdf/visionneuse_pdf.dart';
 import '../core/theme/app_theme.dart';
+import '../core/utils/etapes_dossier.dart';
 import '../providers/auth_provider.dart';
 import '../services/document_service.dart';
 import '../widgets/app_shell.dart';
@@ -27,24 +42,15 @@ import '../widgets/ui_kit.dart';
 /// Taille maximale d'un PDF déposé (identique à la limite du serveur).
 const _tailleMaxPdf = 10 * 1024 * 1024;
 
+/// Au-delà de ce nombre de dossiers, un champ de recherche est proposé.
+const _seuilRecherche = 6;
+
 /// Formate une date ISO (`2026-07-10T…`) en `10/07/2026`.
 String _fmtDate(String? raw) {
   if (raw == null || raw.length < 10) return raw ?? '';
   final p = raw.substring(0, 10).split('-');
   return p.length == 3 ? '${p[2]}/${p[1]}/${p[0]}' : raw.substring(0, 10);
 }
-
-/// Statuts d'un dossier de stage, dans l'ordre de leur cycle de vie :
-/// brouillon → soumis → à corriger | validé → recevable (planifiable),
-/// ou rejeté après un refus motivé.
-const _statutsDossier = [
-  'brouillon',
-  'soumis',
-  'a_corriger',
-  'valide',
-  'recevable',
-  'rejete',
-];
 
 /// Message lisible d'une erreur quelconque.
 String _message(Object e) => switch (e) {
@@ -53,7 +59,43 @@ String _message(Object e) => switch (e) {
   _ => 'Une erreur inattendue est survenue.',
 };
 
-/// Écran de gestion documentaire.
+/// Identifiant entier d'un dossier (0 si absent).
+int _id(Map<String, dynamic> dossier) =>
+    int.tryParse(dossier['id']?.toString() ?? '') ?? 0;
+
+/// Nom de l'étudiant du dossier (repli : « Dossier n° … »).
+String _nomEtudiant(Map<String, dynamic> dossier) {
+  final nom = (dossier['student_name'] ?? '').toString().trim();
+  return nom.isEmpty ? 'Dossier n° ${_id(dossier)}' : nom;
+}
+
+/// Identifiant de la dernière version déposée, ou `null`.
+int? _idDerniereVersion(Map<String, dynamic> dossier) {
+  final version = dossier['derniere_version'];
+  if (version is! Map) return null;
+  return int.tryParse(version['id']?.toString() ?? '');
+}
+
+/// Initiales (2 lettres au plus) d'un nom, pour l'avatar.
+String _initiales(String nom) {
+  final mots = nom.split(RegExp(r'\s+')).where((m) => m.isNotEmpty).toList();
+  if (mots.isEmpty) return '?';
+  final lettres = mots.take(2).map((m) => m[0].toUpperCase()).join();
+  return lettres;
+}
+
+/// Couleurs (texte, fond) et icône associées à une [HumeurDossier].
+(Color, Color, IconData) _styleHumeur(HumeurDossier humeur) => switch (humeur) {
+  HumeurDossier.aFaire => (AppColors.goldDeep, AppColors.goldSoft, Icons.touch_app_rounded),
+  HumeurDossier.attente => (AppColors.grey, AppColors.neutralBg, Icons.hourglass_top_rounded),
+  HumeurDossier.succes => (AppColors.success, AppColors.successBg, Icons.check_circle_rounded),
+  HumeurDossier.alerte => (AppColors.danger, AppColors.dangerBg, Icons.error_outline_rounded),
+};
+
+/// Choix faits dans le panneau « Détails et historique ».
+enum _ChoixDetails { deposer, refuser, rouvrir, accepter, corrections }
+
+/// Écran des dossiers de stage et des rapports.
 class DocumentsScreen extends StatefulWidget {
   /// Crée l'écran.
   const DocumentsScreen({super.key});
@@ -62,182 +104,395 @@ class DocumentsScreen extends StatefulWidget {
   State<DocumentsScreen> createState() => _DocumentsScreenState();
 }
 
-/// État de l'écran : dossiers, versions chargées à la demande, filtres.
+/// État de l'écran : dossiers, recherche et actions en cours.
 class _DocumentsScreenState extends State<DocumentsScreen> {
   late final DocumentService _service;
-  late final bool _peutTeleverser;
-  late final bool _peutDonnerAvis;
 
-  /// Vrai pour le personnel, qui peut changer le statut des dossiers.
-  late final bool _estPersonnel;
+  /// Rôle du compte connecté (`student`, `supervisor`, `admin`…).
+  late final String? _role;
 
-  /// Vrai pour un étudiant, qui peut créer et modifier son dossier.
-  late final bool _estEtudiant;
+  /// Dossiers visibles par le compte (déjà filtrés par le serveur).
+  List<Map<String, dynamic>> _dossiers = [];
 
-  /// Dossiers visibles par le compte.
-  List<Map<String, dynamic>> _folders = [];
+  /// Dossiers dont une action est en cours (bouton en attente, pas de
+  /// double envoi par un double toucher).
+  final Set<int> _enCours = {};
 
-  /// Versions de documents, chargées à l'ouverture de chaque dossier.
-  final Map<int, List<Map<String, dynamic>>> _documents = {};
+  bool _chargement = true;
+  String? _erreur;
 
-  /// Dossier en cours de dépôt (affiche un indicateur sur son bouton).
-  int? _uploadingFolder;
+  /// Texte de recherche (étudiant, entreprise ou sujet).
+  String _recherche = '';
 
-  bool _loading = true;
-  String? _error;
+  /// Filtre choisi en haut de l'écran ; `null` = tous les dossiers.
+  CategorieDossier? _filtre;
 
-  /// Texte de recherche (entreprise ou sujet).
-  String _q = '';
-
-  /// Filtre de statut actif.
-  String _filtre = 'Tous';
+  bool get _estEtudiant => _role == 'student';
 
   @override
   void initState() {
     super.initState();
     final auth = context.read<AuthProvider>();
     _service = DocumentService(auth.api);
-    _peutTeleverser = const {
-      'admin',
-      'responsible',
-      'student',
-    }.contains(auth.role);
-    _peutDonnerAvis = const {'admin', 'supervisor'}.contains(auth.role);
-    _estPersonnel = auth.canManage;
-    _estEtudiant = auth.role == 'student';
-    _loadFolders();
+    _role = auth.role;
+    _charger();
   }
 
+  // -------------------------------------------------------------------------
+  // Chargement
+  // -------------------------------------------------------------------------
+
   /// Charge (ou recharge) la liste des dossiers.
-  Future<void> _loadFolders() async {
+  Future<void> _charger() async {
     setState(() {
-      _loading = true;
-      _error = null;
+      _chargement = true;
+      _erreur = null;
     });
     try {
-      final result = await _service.getFolders();
+      final resultat = await _service.getFolders();
       if (!mounted) return;
       setState(() {
-        _folders = result;
-        // Les versions seront rechargées à la prochaine ouverture.
-        _documents.clear();
-        _loading = false;
+        _dossiers = resultat;
+        _chargement = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _loading = false;
-        _error = _message(e);
+        _chargement = false;
+        _erreur = _message(e);
       });
     }
   }
 
-  /// Ouvre le formulaire de dossier : création ([folder] null) ou
-  /// modification de l'entreprise et du sujet.
-  Future<void> _editerDossier({Map<String, dynamic>? folder}) async {
+  /// Recharge les dossiers (et le profil de l'étudiant, affiché à l'accueil).
+  Future<void> _rafraichir() async {
+    if (_estEtudiant) await context.read<AuthProvider>().fetchUserProfile();
+    await _charger();
+  }
+
+  /// Dossier à jour (après rechargement) ayant l'identifiant [id].
+  Map<String, dynamic>? _dossierParId(int id) {
+    for (final d in _dossiers) {
+      if (_id(d) == id) return d;
+    }
+    return null;
+  }
+
+  /// Exécute [action] sur le dossier [id] : bouton en attente, message de
+  /// réussite [succes], rechargement ; une erreur est affichée en rouge.
+  Future<bool> _executer(int id, Future<void> Function() action, String succes) async {
+    if (_enCours.contains(id)) return false;
+    setState(() => _enCours.add(id));
+    try {
+      await action();
+      if (!mounted) return true;
+      SgToast.show(context, succes);
+      await _rafraichir();
+      return true;
+    } catch (e) {
+      if (mounted) SgToast.show(context, _message(e), tone: SgTone.danger);
+      return false;
+    } finally {
+      if (mounted) setState(() => _enCours.remove(id));
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Fenêtres de confirmation
+  // -------------------------------------------------------------------------
+
+  /// Fenêtre de décision : dit ce qui va se passer, avec un champ de
+  /// commentaire facultatif ou obligatoire. Retourne le texte saisi (vide
+  /// s'il n'y a pas de champ), ou `null` si l'utilisateur renonce.
+  Future<String?> _confirmer({
+    required String titre,
+    required String message,
+    required String bouton,
+    required IconData icone,
+    bool danger = false,
+    String? champ,
+    bool champObligatoire = false,
+    String? exemple,
+  }) {
+    return showDialog<String>(
+      context: context,
+      builder: (_) => _DialogueDecision(
+        titre: titre,
+        message: message,
+        bouton: bouton,
+        icone: icone,
+        danger: danger,
+        champ: champ,
+        champObligatoire: champObligatoire,
+        exemple: exemple,
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Actions (une méthode par bouton)
+  // -------------------------------------------------------------------------
+
+  /// Exécute l'action principale [action] sur [dossier].
+  void _agir(ActionDossier action, Map<String, dynamic> dossier) {
+    switch (action) {
+      case ActionDossier.deposer:
+        _deposer(dossier);
+      case ActionDossier.envoyer:
+        _envoyer(dossier);
+      case ActionDossier.accepter:
+        _accepter(dossier);
+      case ActionDossier.demanderCorrections:
+        _demanderCorrections(dossier);
+      case ActionDossier.autoriser:
+        _autoriser(dossier);
+      case ActionDossier.refuser:
+        _refuser(dossier);
+      case ActionDossier.rouvrir:
+        _rouvrir(dossier);
+    }
+  }
+
+  /// Ouvre le rapport (dernière version, ou [versionId]) pour le lire.
+  ///
+  /// Sur le Web, l'onglet est préparé AVANT l'attente réseau (sinon le
+  /// navigateur le bloquerait) : `preparer` doit rester la 1re instruction.
+  Future<void> _lire(Map<String, dynamic> dossier, {int? versionId, int? numero}) async {
+    final visionneuse = VisionneusePdf()..preparer();
+    final id = versionId ?? _idDerniereVersion(dossier);
+    if (id == null) {
+      visionneuse.annuler();
+      return;
+    }
+    final num = numero ?? numeroDerniereVersion(dossier) ?? 1;
+    try {
+      final octets = await _service.telechargerOctets(id);
+      await visionneuse.afficher(octets, 'rapport_dossier_${_id(dossier)}_v$num.pdf');
+    } catch (e) {
+      visionneuse.annuler();
+      if (mounted) SgToast.show(context, _message(e), tone: SgTone.danger);
+    }
+  }
+
+  /// Étudiant (ou personnel) : choisit un PDF et le dépose ; propose
+  /// ensuite à l'étudiant de l'envoyer tout de suite à son encadreur.
+  Future<void> _deposer(Map<String, dynamic> dossier) async {
+    final id = _id(dossier);
+    final statut = dossier['status']?.toString() ?? '';
+
+    // Une nouvelle version d'un dossier accepté relance l'examen (STA05) :
+    // on prévient AVANT de choisir le fichier.
+    if (statut == 'valide' || statut == 'recevable') {
+      final ok = await _confirmer(
+        titre: 'Déposer une nouvelle version ?',
+        message:
+            'Votre rapport a déjà été accepté. Une nouvelle version devra '
+            'de nouveau être examinée par votre encadreur.',
+        bouton: 'Choisir le fichier',
+        icone: Icons.upload_file_rounded,
+      );
+      if (ok == null || !mounted) return;
+    }
+
+    final PlatformFile? fichier;
+    try {
+      fichier = await FilePicker.pickFile(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+      );
+    } catch (e) {
+      if (mounted) SgToast.show(context, _message(e), tone: SgTone.danger);
+      return;
+    }
+    if (fichier == null || !mounted) return;
+
+    // Contrôle immédiat (le serveur vérifie aussi taille et signature).
+    final taille = (await fichier.length()) ?? 0;
+    if (taille > _tailleMaxPdf) {
+      if (mounted) {
+        SgToast.show(
+          context,
+          'Ce fichier dépasse 10 Mo : réduisez-le (par exemple en '
+          'compressant les images) puis réessayez.',
+          tone: SgTone.danger,
+        );
+      }
+      return;
+    }
+
+    final depose = await _executer(
+      id,
+      () => _service.uploadDocument(id, fichier!),
+      'Rapport déposé.',
+    );
+    if (!depose || !mounted || !_estEtudiant) return;
+
+    // Enchaînement naturel : « déposé » → « l'envoyer maintenant ? ».
+    final aJour = _dossierParId(id);
+    if (aJour == null) return;
+    if (situationDossier(_role, aJour).actions.contains(ActionDossier.envoyer)) {
+      await _envoyer(aJour, apresDepot: true);
+    }
+  }
+
+  /// Étudiant : envoie le rapport à l'encadreur (transition « soumettre »).
+  Future<void> _envoyer(Map<String, dynamic> dossier, {bool apresDepot = false}) async {
+    final version = numeroDerniereVersion(dossier);
+    final texte = await _confirmer(
+      titre: apresDepot ? 'L’envoyer maintenant ?' : 'Envoyer votre rapport ?',
+      message:
+          '${version == null ? 'Votre rapport' : 'La version $version de votre rapport'} '
+          'sera envoyée à votre encadreur, qui donnera son avis. Vous pourrez '
+          'encore déposer une nouvelle version ensuite.',
+      bouton: 'Envoyer à mon encadreur',
+      icone: Icons.send_rounded,
+    );
+    if (texte == null || !mounted) return;
+    await _executer(
+      _id(dossier),
+      () => _service.transition(_id(dossier), 'soumettre'),
+      'Rapport envoyé à votre encadreur.',
+    );
+  }
+
+  /// Encadreur : accepte la dernière version (avis favorable).
+  Future<void> _accepter(Map<String, dynamic> dossier) async {
+    final versionId = _idDerniereVersion(dossier);
+    if (versionId == null) return;
+    final texte = await _confirmer(
+      titre: 'Accepter le rapport ?',
+      message:
+          'Version ${numeroDerniereVersion(dossier) ?? ''} du rapport de '
+          '${_nomEtudiant(dossier)}. Le dossier passera ensuite au '
+          'responsable des stages, qui autorisera la soutenance.',
+      bouton: 'Accepter',
+      icone: Icons.check_circle_rounded,
+      champ: 'Commentaire pour l’étudiant',
+    );
+    if (texte == null || !mounted) return;
+    await _executer(
+      _id(dossier),
+      () => _service.addReview(versionId, 'favorable', texte),
+      'Rapport accepté. Le dossier passe au responsable des stages.',
+    );
+  }
+
+  /// Encadreur : demande des corrections (avis défavorable commenté).
+  Future<void> _demanderCorrections(Map<String, dynamic> dossier) async {
+    final versionId = _idDerniereVersion(dossier);
+    if (versionId == null) return;
+    final texte = await _confirmer(
+      titre: 'Demander des corrections',
+      message:
+          '${_nomEtudiant(dossier)} verra votre commentaire et déposera une '
+          'version corrigée.',
+      bouton: 'Envoyer la demande',
+      icone: Icons.edit_note_rounded,
+      champ: 'Ce qu’il faut corriger',
+      champObligatoire: true,
+      exemple: 'Ex. : compléter la bibliographie, revoir le chapitre 2…',
+    );
+    if (texte == null || !mounted) return;
+    await _executer(
+      _id(dossier),
+      () => _service.addReview(versionId, 'defavorable', texte),
+      'Corrections demandées : l’étudiant verra votre commentaire.',
+    );
+  }
+
+  /// Personnel : autorise la soutenance (dossier prêt à être planifié).
+  Future<void> _autoriser(Map<String, dynamic> dossier) async {
+    final texte = await _confirmer(
+      titre: 'Autoriser la soutenance ?',
+      message:
+          'Le dossier de ${_nomEtudiant(dossier)} sera prêt pour la '
+          'soutenance et pourra être planifié.',
+      bouton: 'Autoriser',
+      icone: Icons.verified_rounded,
+    );
+    if (texte == null || !mounted) return;
+    await _executer(
+      _id(dossier),
+      () => _service.transition(_id(dossier), 'autoriser'),
+      'Soutenance autorisée : le dossier peut être planifié.',
+    );
+  }
+
+  /// Personnel : refuse le dossier (motif obligatoire, lu par l'étudiant).
+  Future<void> _refuser(Map<String, dynamic> dossier) async {
+    final motif = await _confirmer(
+      titre: 'Refuser le dossier ?',
+      message:
+          '${_nomEtudiant(dossier)} verra le motif. Le dossier pourra être '
+          'rouvert plus tard si nécessaire.',
+      bouton: 'Refuser le dossier',
+      icone: Icons.block_rounded,
+      danger: true,
+      champ: 'Motif du refus',
+      champObligatoire: true,
+    );
+    if (motif == null || !mounted) return;
+    await _executer(
+      _id(dossier),
+      () => _service.transition(_id(dossier), 'refuser', motif: motif),
+      'Dossier refusé.',
+    );
+  }
+
+  /// Personnel : rouvre un dossier refusé ou prêt (motif obligatoire).
+  Future<void> _rouvrir(Map<String, dynamic> dossier) async {
+    final motif = await _confirmer(
+      titre: 'Rouvrir le dossier ?',
+      message: 'Le dossier repassera « en attente d’avis » de l’encadreur.',
+      bouton: 'Rouvrir',
+      icone: Icons.lock_open_rounded,
+      champ: 'Motif',
+      champObligatoire: true,
+    );
+    if (motif == null || !mounted) return;
+    await _executer(
+      _id(dossier),
+      () => _service.transition(_id(dossier), 'rouvrir', motif: motif),
+      'Dossier rouvert.',
+    );
+  }
+
+  /// Étudiant : crée son dossier ([dossier] null) ou modifie l'entreprise et
+  /// le sujet.
+  Future<void> _editerDossier({Map<String, dynamic>? dossier}) async {
     final saisie = await showDialog<(String, String)>(
       context: context,
       builder: (_) => _FolderDialog(
-        entreprise: folder?['company_name']?.toString(),
-        sujet: folder?['subject']?.toString(),
+        entreprise: dossier?['company_name']?.toString(),
+        sujet: dossier?['subject']?.toString(),
       ),
     );
     if (saisie == null || !mounted) return;
     final (entreprise, sujet) = saisie;
     try {
-      if (folder == null) {
+      if (dossier == null) {
         await _service.createFolder(companyName: entreprise, subject: sujet);
       } else {
-        await _service.updateFolder(
-          int.parse(folder['id'].toString()),
-          companyName: entreprise,
-          subject: sujet,
-        );
+        await _service.updateFolder(_id(dossier), companyName: entreprise, subject: sujet);
       }
       if (!mounted) return;
       SgToast.show(
         context,
-        folder == null ? 'Dossier de stage créé.' : 'Dossier mis à jour.',
+        dossier == null
+            ? 'Dossier créé. Étape suivante : déposer votre rapport.'
+            : 'Dossier mis à jour.',
       );
-      // Le profil (statut du dossier) et la liste sont rafraîchis.
-      await context.read<AuthProvider>().fetchUserProfile();
-      await _loadFolders();
+      await _rafraichir();
     } catch (e) {
       if (mounted) SgToast.show(context, _message(e), tone: SgTone.danger);
     }
   }
 
-  /// Applique une étape du cycle de vie au dossier [folderId].
-  ///
-  /// [action] : `soumettre`, `autoriser`, `refuser` ou `rouvrir`. Pour
-  /// refuser ou rouvrir, un motif est demandé (obligatoire côté serveur).
-  Future<void> _transition(int folderId, String action, {bool avecMotif = false}) async {
-    String? motif;
-    if (avecMotif) {
-      motif = await _demanderMotif(
-        action == 'refuser' ? 'Refuser le dossier' : 'Rouvrir le dossier',
-      );
-      if (motif == null || !mounted) return;
-    }
-    try {
-      final dossier = await _service.transition(folderId, action, motif: motif);
-      if (!mounted) return;
-      SgToast.show(
-        context,
-        'Dossier : ${libelleStatut(dossier['status']?.toString() ?? '')}.',
-      );
-      await context.read<AuthProvider>().fetchUserProfile();
-      await _loadFolders();
-    } catch (e) {
-      if (mounted) SgToast.show(context, _message(e), tone: SgTone.danger);
-    }
-  }
-
-  /// Demande un motif ; null si l'utilisateur renonce.
-  Future<String?> _demanderMotif(String titre) {
-    final controleur = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(titre),
-        content: TextField(
-          controller: controleur,
-          autofocus: true,
-          maxLines: 3,
-          decoration: const InputDecoration(labelText: 'Motif (obligatoire)'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Retour')),
-          SgButton(
-            'Valider',
-            onPressed: () {
-              final texte = controleur.text.trim();
-              if (texte.isNotEmpty) Navigator.pop(ctx, texte);
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Affiche l'historique des étapes du dossier [folderId].
-  Future<void> _ouvrirHistorique(int folderId) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => _HistoriqueSheet(future: _service.historique(folderId)),
-    );
-  }
-
-  /// Bascule le rapport du dossier entre « standard » et « confidentiel ».
-  ///
-  /// Un rapport confidentiel n'est consultable que par l'étudiant, ses
-  /// encadreurs et les personnes habilitées nominativement ; la fin d'un
-  /// embargo ne le rend jamais public automatiquement.
-  Future<void> _basculerConfidentialite(int folderId, bool confidentiel) async {
+  /// Bascule le rapport entre « standard » et « confidentiel » (personnel).
+  Future<void> _basculerConfidentialite(Map<String, dynamic> dossier, bool confidentiel) async {
     try {
       await _service.definirConfidentialite(
-        folderId,
+        _id(dossier),
         niveau: confidentiel ? 'confidentiel' : 'standard',
         origine: confidentiel ? 'Demande de l’entreprise d’accueil' : '',
       );
@@ -245,429 +500,1016 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       SgToast.show(
         context,
         confidentiel
-            ? 'Rapport confidentiel : accès limité aux personnes habilitées.'
-            : 'Rapport au niveau standard.',
+            ? 'Rapport confidentiel : seules les personnes habilitées le lisent.'
+            : 'Rapport consultable normalement.',
       );
-      await _loadFolders();
+      await _charger();
     } catch (e) {
       if (mounted) SgToast.show(context, _message(e), tone: SgTone.danger);
     }
   }
 
-  /// Charge les versions du dossier [folderId].
-  Future<void> _loadDocuments(int folderId) async {
-    try {
-      final result = await _service.getDocuments(folderId);
-      if (!mounted) return;
-      setState(() => _documents[folderId] = result);
-    } catch (e) {
-      if (!mounted) return;
-      SgToast.show(context, _message(e), tone: SgTone.danger);
-    }
-  }
-
-  /// Sélectionne un PDF, vérifie sa taille puis le dépose dans [folderId].
-  Future<void> _upload(int folderId) async {
-    try {
-      final file = await FilePicker.pickFile(
-        type: FileType.custom,
-        allowedExtensions: ['pdf'],
-      );
-      if (file == null) return;
-
-      // Contrôle précoce (le serveur vérifie aussi taille et signature).
-      final taille = (await file.length()) ?? 0;
-      if (taille > _tailleMaxPdf) {
-        if (mounted) {
-          SgToast.show(
-            context,
-            'Le fichier ne doit pas dépasser 10 Mo.',
-            tone: SgTone.danger,
-          );
-        }
-        return;
-      }
-
-      setState(() => _uploadingFolder = folderId);
-      await _service.uploadDocument(folderId, file);
-      await _loadDocuments(folderId);
-      if (!mounted) return;
-      SgToast.show(context, 'Document envoyé avec succès.');
-      // Un dossier validé ou recevable repasse à « soumis » : la nouvelle
-      // version doit être réexaminée (STA05).
-      await _loadFolders();
-    } catch (e) {
-      if (!mounted) return;
-      SgToast.show(context, _message(e), tone: SgTone.danger);
-    } finally {
-      if (mounted) setState(() => _uploadingFolder = null);
-    }
-  }
-
-  /// Télécharge le document [documentId].
-  Future<void> _download(int documentId) async {
-    try {
-      final success = await _service.downloadDocument(documentId);
-      if (!mounted) return;
-      if (success) SgToast.show(context, 'Téléchargement terminé.');
-    } catch (e) {
-      if (!mounted) return;
-      SgToast.show(context, _message(e), tone: SgTone.danger);
-    }
-  }
-
-  /// Ouvre le panneau des avis du document [documentId].
-  void _ouvrirAvis(int documentId) {
-    showModalBottomSheet<void>(
+  /// Ouvre « Détails et historique » puis exécute le choix éventuel.
+  Future<void> _details(Map<String, dynamic> dossier) async {
+    final choix = await showModalBottomSheet<_ChoixDetails>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => _AvisSheet(
+      showDragHandle: true,
+      builder: (_) => _DetailsDossier(
         service: _service,
-        documentId: documentId,
-        peutDonnerAvis: _peutDonnerAvis,
+        dossier: dossier,
+        role: _role,
+        onLire: (versionId, numero) => _lire(dossier, versionId: versionId, numero: numero),
+        onConfidentialite: (valeur) => _basculerConfidentialite(dossier, valeur),
       ),
-      // Un avis fait passer le dossier à « validé » ou « à corriger ».
-    ).then((_) {
-      if (_peutDonnerAvis && mounted) _loadFolders();
-    });
+    );
+    if (choix == null || !mounted) return;
+    switch (choix) {
+      case _ChoixDetails.deposer:
+        await _deposer(dossier);
+      case _ChoixDetails.refuser:
+        await _refuser(dossier);
+      case _ChoixDetails.rouvrir:
+        await _rouvrir(dossier);
+      case _ChoixDetails.accepter:
+        await _accepter(dossier);
+      case _ChoixDetails.corrections:
+        await _demanderCorrections(dossier);
+    }
   }
 
-  /// Dossiers correspondant à la recherche et au filtre de statut.
-  List<Map<String, dynamic>> get _filtrees {
-    final q = _q.toLowerCase();
-    return _folders.where((f) {
-      final nom = (f['company_name'] ?? '').toString().toLowerCase();
-      final sujet = (f['subject'] ?? '').toString().toLowerCase();
-      if (q.isNotEmpty && !nom.contains(q) && !sujet.contains(q)) {
-        return false;
-      }
-      return _filtre == 'Tous' || f['status']?.toString() == _filtre;
-    }).toList();
-  }
+  // -------------------------------------------------------------------------
+  // Affichage
+  // -------------------------------------------------------------------------
+
+  /// Titre de la page, dans les mots du rôle.
+  String get _titre => switch (_role) {
+    'student' => 'Mon rapport de stage',
+    'supervisor' => 'Rapports à examiner',
+    _ => 'Dossiers de stage',
+  };
+
+  /// Sous-titre : ce que l'utilisateur doit savoir pour commencer.
+  String get _sousTitre => switch (_role) {
+    'student' => 'Suivez les étapes : à chaque fois, un seul bouton à toucher.',
+    'supervisor' => 'Les rapports qui attendent votre avis sont en haut.',
+    _ => 'Les dossiers qui attendent une décision sont en haut.',
+  };
 
   @override
   Widget build(BuildContext context) {
     return SgPage(
       section: AppSection.documents,
-      title: 'Gestion documentaire',
-      subtitle:
-          'Dossiers de stage, versions des documents et avis des encadreurs.',
-      onRefresh: _loadFolders,
-      actions: [
-        SgButton(
-          'Actualiser',
-          icon: Icons.refresh_rounded,
-          variant: SgBtnVariant.outline,
-          onPressed: _loadFolders,
-        ),
-      ],
-      child: _loading
+      title: _titre,
+      subtitle: _sousTitre,
+      // Étudiant : une seule carte, largeur de lecture confortable ;
+      // suivi : jusqu'à deux colonnes de cartes sur un grand écran.
+      maxWidth: _estEtudiant ? 860 : 1240,
+      // Pas de bouton « Actualiser » isolé : la liste se recharge après
+      // chaque décision, et en tirant la page vers le bas.
+      onRefresh: _charger,
+      child: _chargement
           ? const SgLoading(message: 'Chargement des dossiers…')
-          : _error != null
+          : _erreur != null
           ? SgErrorState(
               title: 'Impossible de charger les dossiers',
-              message: _error!,
-              onRetry: _loadFolders,
+              message: _erreur!,
+              onRetry: _charger,
             )
-          : _contenu(),
+          : (_estEtudiant ? _vueEtudiant() : _vueSuivi()),
     );
   }
 
-  /// Indicateurs, filtres puis liste des dossiers.
-  Widget _contenu() {
-    final visibles = _filtrees;
-    int compte(String statut) =>
-        _folders.where((f) => f['status']?.toString() == statut).length;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        LayoutBuilder(
-          builder: (context, c) {
-            const gap = 12.0;
-            final perRow = c.maxWidth >= 1000 ? 4 : (c.maxWidth >= 440 ? 2 : 1);
-            final w = (c.maxWidth - (perRow - 1) * gap) / perRow;
-            final cards = [
-              SgStatCard(
-                label: 'Dossiers de stage',
-                value: '${_folders.length}',
-                icon: Icons.folder_open_rounded,
-              ),
-              SgStatCard(
-                label: 'En cours (brouillon, soumis, à corriger, validé)',
-                value:
-                    '${compte('brouillon') + compte('soumis') + compte('a_corriger') + compte('valide')}',
-                icon: Icons.hourglass_top_rounded,
-                tone: SgTone.warning,
-              ),
-              SgStatCard(
-                label: 'Recevables',
-                value: '${compte('recevable')}',
-                icon: Icons.verified_outlined,
-                tone: SgTone.success,
-              ),
-              SgStatCard(
-                label: 'Rejetés',
-                value: '${compte('rejete')}',
-                icon: Icons.cancel_outlined,
-                tone: SgTone.danger,
-              ),
-            ];
-            return Wrap(
-              spacing: gap,
-              runSpacing: gap,
-              children: [for (final card in cards) SizedBox(width: w, child: card)],
-            );
-          },
-        ),
-        const SizedBox(height: 20),
-        SgCard(
-          padding: const EdgeInsets.all(14),
-          child: Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              SgSearch(
-                width: 260,
-                hint: 'Entreprise ou sujet…',
-                onChanged: (v) => setState(() => _q = v),
-              ),
-              for (final s in ['Tous', ..._statutsDossier])
-                SgChip(
-                  label: s == 'Tous' ? 'Tous' : libelleStatut(s),
-                  selected: _filtre == s,
-                  onTap: () => setState(() => _filtre = s),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        if (visibles.isEmpty)
-          SgEmpty(
-            icon: Icons.folder_open_outlined,
-            title: _folders.isEmpty ? 'Aucun dossier' : 'Aucun résultat',
-            message: _folders.isEmpty
-                ? (_estEtudiant
-                      ? 'Commencez par créer votre dossier de stage : '
-                            'entreprise d’accueil et sujet.'
-                      : 'Aucun dossier de stage ne vous est encore accessible.')
-                : 'Aucun dossier ne correspond à votre recherche.',
-            // Un étudiant sans dossier peut le créer directement ici.
-            action: _folders.isEmpty && _estEtudiant
-                ? SgButton(
-                    'Créer mon dossier de stage',
-                    icon: Icons.create_new_folder_outlined,
-                    onPressed: () => _editerDossier(),
-                  )
-                : null,
-          )
-        else
-          for (final folder in visibles) _folderCard(folder),
-      ],
-    );
-  }
-
-  /// Carte dépliable d'un dossier : sujet, versions et dépôt.
-  Widget _folderCard(Map<String, dynamic> folder) {
-    final folderId = int.tryParse(folder['id']?.toString() ?? '') ?? 0;
-    final statut = folder['status']?.toString();
-    final docs = _documents[folderId];
-
+  /// Carte d'un dossier, branchée sur les actions de l'écran.
+  Widget _carte(Map<String, dynamic> dossier) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: SgCard(
-        padding: EdgeInsets.zero,
-        child: Theme(
-          // Supprime les séparateurs par défaut de l'ExpansionTile.
-          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-          child: ExpansionTile(
-            tilePadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-            childrenPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-            leading: Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: AppColors.goldSoft,
-                borderRadius: BorderRadius.circular(11),
-              ),
-              child: const Icon(
-                Icons.folder_open_rounded,
-                size: 21,
-                color: AppColors.goldDeep,
-              ),
-            ),
-            title: Text(
-              folder['company_name']?.toString() ?? 'Entreprise inconnue',
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: AppColors.ink,
-              ),
-            ),
-            subtitle: Padding(
-              padding: const EdgeInsets.only(top: 3),
-              child: Text(
-                'Dossier #$folderId'
-                '${folder['subject'] != null ? ' · ${folder['subject']}' : ''}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, color: AppColors.grey),
-              ),
-            ),
-            trailing: SgStatusBadge(statut ?? ''),
-            // Chargement paresseux : versions récupérées à la 1re ouverture.
-            onExpansionChanged: (open) {
-              if (open && !_documents.containsKey(folderId)) {
-                _loadDocuments(folderId);
-              }
-            },
-            children: [
-              const Divider(),
-              const SizedBox(height: 12),
-              SgKv(
-                label: 'Sujet',
-                value: folder['subject']?.toString() ?? 'Non défini',
-              ),
-              const SizedBox(height: 16),
-              _etapesDossier(folderId, statut ?? '', folder),
-              // Étudiant : modification tant que le dossier n'est pas recevable.
-              if (_estEtudiant && statut != 'recevable') ...[
-                const SizedBox(height: 14),
-                SgButton(
-                  'Modifier l’entreprise ou le sujet',
-                  icon: Icons.edit_outlined,
-                  variant: SgBtnVariant.outline,
-                  dense: true,
-                  onPressed: () => _editerDossier(folder: folder),
-                ),
-              ],
-              const SizedBox(height: 16),
-              const SgOverline('Historique des versions'),
-              const SizedBox(height: 10),
-              if (docs == null)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 14),
-                  child: Center(
-                    child: SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2.2),
-                    ),
-                  ),
-                )
-              else if (docs.isEmpty)
-                const Text(
-                  'Aucun document déposé.',
-                  style: TextStyle(fontSize: 12.5, color: AppColors.grey),
-                )
-              else
-                // Version la plus récente en premier.
-                for (final document in docs.reversed) _docRow(document),
-              if (_peutTeleverser) ...[
-                const SizedBox(height: 14),
-                SgButton(
-                  'Déposer une nouvelle version (PDF, 10 Mo max.)',
-                  icon: Icons.upload_file_rounded,
-                  variant: SgBtnVariant.dark,
-                  expand: true,
-                  loading: _uploadingFolder == folderId,
-                  onPressed: () => _upload(folderId),
-                ),
-              ],
-            ],
-          ),
-        ),
+      padding: const EdgeInsets.only(bottom: 14),
+      child: _CarteDossier(
+        dossier: dossier,
+        situation: situationDossier(_role, dossier),
+        vueEtudiant: _estEtudiant,
+        enCours: _enCours.contains(_id(dossier)),
+        onAction: (action) => _agir(action, dossier),
+        onLire: () => _lire(dossier),
+        onDetails: () => _details(dossier),
+        // L'étudiant modifie son entreprise ou son sujet sans chercher :
+        // le bouton est sur la carte (sauf une fois le dossier prêt).
+        onModifier: _estEtudiant && dossier['status']?.toString() != 'recevable'
+            ? () => _editerDossier(dossier: dossier)
+            : null,
       ),
     );
   }
 
-  /// Étapes possibles du dossier selon le rôle et son état (chapitre 4),
-  /// historique et confidentialité.
-  Widget _etapesDossier(int folderId, String statut, Map<String, dynamic> folder) {
-    final confidentiel = folder['confidentialite']?.toString() == 'confidentiel';
-    final indication = switch (statut) {
-      'brouillon' => 'Déposez votre rapport puis soumettez le dossier.',
-      'soumis' => 'En attente de l’avis de l’encadreur sur la dernière version.',
-      'a_corriger' => 'Corrections demandées : déposez une nouvelle version puis resoumettez.',
-      'valide' => 'Avis favorable : en attente de l’autorisation de soutenance.',
-      'recevable' => 'Soutenance autorisée : le dossier peut être planifié.',
-      'rejete' => 'Dossier refusé (motif dans l’historique).',
-      _ => '',
-    };
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SgOverline('Étapes du dossier'),
-        const SizedBox(height: 6),
-        Text(indication, style: const TextStyle(fontSize: 12.5, color: AppColors.grey)),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
+  /// Liste de cartes : une colonne sur téléphone et tablette étroite, deux
+  /// colonnes dès 900 px, pour utiliser la largeur d'un ordinateur.
+  Widget _grille(Iterable<Map<String, dynamic>> dossiers) {
+    final liste = dossiers.toList();
+    return LayoutBuilder(
+      builder: (context, contraintes) {
+        if (contraintes.maxWidth < 900) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [for (final dossier in liste) _carte(dossier)],
+          );
+        }
+        const espace = 16.0;
+        final largeur = (contraintes.maxWidth - espace) / 2;
+        return Wrap(
+          spacing: espace,
           children: [
-            if (_estEtudiant && (statut == 'brouillon' || statut == 'a_corriger'))
-              SgButton(
-                'Soumettre mon dossier',
-                icon: Icons.send_rounded,
-                variant: SgBtnVariant.dark,
-                dense: true,
-                onPressed: () => _transition(folderId, 'soumettre'),
+            for (final dossier in liste) SizedBox(width: largeur, child: _carte(dossier)),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Étudiant : son dossier (en général un seul), guidé pas à pas.
+  Widget _vueEtudiant() {
+    if (_dossiers.isEmpty) {
+      return SgEmpty(
+        icon: Icons.create_new_folder_outlined,
+        title: 'Commencez par créer votre dossier',
+        message:
+            'Indiquez votre entreprise d’accueil et votre sujet. Vous '
+            'déposerez ensuite votre rapport.',
+        action: SgButton(
+          'Créer mon dossier de stage',
+          icon: Icons.create_new_folder_outlined,
+          onPressed: () => _editerDossier(),
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _Guide(etapes: guideDuRole(_role)),
+        const SizedBox(height: 18),
+        for (final dossier in _dossiers) _carte(dossier),
+      ],
+    );
+  }
+
+  /// Libellé d'une catégorie de filtre.
+  static String _libelleCategorie(CategorieDossier c) => switch (c) {
+    CategorieDossier.aTraiter => 'À traiter',
+    CategorieDossier.enCours => 'En cours',
+    CategorieDossier.prets => 'Prêts',
+    CategorieDossier.refuses => 'Refusés',
+  };
+
+  /// Encadreur et personnel : mode d'emploi, compteurs cliquables (filtres),
+  /// puis « À traiter maintenant » et les autres dossiers.
+  Widget _vueSuivi() {
+    final q = _recherche.toLowerCase();
+    final trouves = _dossiers.where((d) {
+      if (q.isEmpty) return true;
+      return [d['student_name'], d['company_name'], d['subject']]
+          .any((v) => (v ?? '').toString().toLowerCase().contains(q));
+    }).toList();
+    // Nombre de dossiers par catégorie (affiché sur chaque filtre).
+    final parCategorie = {
+      for (final c in CategorieDossier.values)
+        c: trouves.where((d) => categorieDossier(_role, d) == c).toList(),
+    };
+    final aTraiter = parCategorie[CategorieDossier.aTraiter]!;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _Guide(etapes: guideDuRole(_role)),
+        const SizedBox(height: 18),
+        if (_dossiers.isEmpty)
+          SgEmpty(
+            icon: Icons.folder_open_outlined,
+            title: 'Aucun dossier pour le moment',
+            message: _role == 'supervisor'
+                ? 'Les dossiers des étudiants que vous encadrez apparaîtront ici.'
+                : 'Les dossiers créés par les étudiants apparaîtront ici.',
+          )
+        else ...[
+          // Compteurs cliquables : ils remplacent les statistiques muettes.
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final c in CategorieDossier.values)
+                SgChip(
+                  label: '${_libelleCategorie(c)} (${parCategorie[c]!.length})',
+                  selected: _filtre == c,
+                  onTap: () => setState(() => _filtre = _filtre == c ? null : c),
+                ),
+              SgChip(
+                label: 'Tous (${trouves.length})',
+                selected: _filtre == null,
+                onTap: () => setState(() => _filtre = null),
               ),
-            if (_estPersonnel && statut == 'valide')
-              SgButton(
-                'Autoriser la soutenance',
-                icon: Icons.verified_rounded,
-                variant: SgBtnVariant.dark,
-                dense: true,
-                onPressed: () => _transition(folderId, 'autoriser'),
-              ),
-            if (_estPersonnel && const {'soumis', 'a_corriger', 'valide'}.contains(statut))
-              SgButton(
-                'Refuser',
-                icon: Icons.block_rounded,
-                variant: SgBtnVariant.outline,
-                dense: true,
-                onPressed: () => _transition(folderId, 'refuser', avecMotif: true),
-              ),
-            if (_estPersonnel && const {'rejete', 'recevable'}.contains(statut))
-              SgButton(
-                'Rouvrir',
-                icon: Icons.lock_open_rounded,
-                variant: SgBtnVariant.outline,
-                dense: true,
-                onPressed: () => _transition(folderId, 'rouvrir', avecMotif: true),
-              ),
-            SgButton(
-              'Historique',
-              icon: Icons.history_rounded,
-              variant: SgBtnVariant.outline,
-              dense: true,
-              onPressed: () => _ouvrirHistorique(folderId),
+            ],
+          ),
+          if (_dossiers.length > _seuilRecherche) ...[
+            const SizedBox(height: 12),
+            SgSearch(
+              hint: 'Nom de l’étudiant, entreprise ou sujet…',
+              onChanged: (v) => setState(() => _recherche = v),
             ),
           ],
-        ),
-        if (_estPersonnel) ...[
-          const SizedBox(height: 8),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            value: confidentiel,
-            onChanged: (valeur) => _basculerConfidentialite(folderId, valeur),
-            title: const Text('Rapport confidentiel', style: TextStyle(fontSize: 13)),
-            subtitle: const Text(
-              'Accès réservé à l’étudiant, à ses encadreurs et aux personnes habilitées.',
-              style: TextStyle(fontSize: 11.5),
+          const SizedBox(height: 20),
+          if (_filtre != null) ...[
+            // Une seule catégorie demandée.
+            SgSectionTitle('${_libelleCategorie(_filtre!)} (${parCategorie[_filtre]!.length})'),
+            const SizedBox(height: 12),
+            if (parCategorie[_filtre]!.isEmpty)
+              const SgBanner(message: 'Aucun dossier dans cette catégorie.')
+            else
+              _grille(parCategorie[_filtre]!),
+          ] else ...[
+            SgSectionTitle(
+              aTraiter.isEmpty ? 'À traiter maintenant' : 'À traiter maintenant (${aTraiter.length})',
+            ),
+            const SizedBox(height: 12),
+            if (aTraiter.isEmpty)
+              const SgBanner(
+                message: 'Rien à traiter pour le moment. Tout est à jour.',
+                tone: SgTone.success,
+                icon: Icons.task_alt_rounded,
+              )
+            else
+              _grille(aTraiter),
+            if (trouves.length > aTraiter.length) ...[
+              const SizedBox(height: 22),
+              SgSectionTitle('Autres dossiers (${trouves.length - aTraiter.length})'),
+              const SizedBox(height: 12),
+              _grille(trouves.where((d) => categorieDossier(_role, d) != CategorieDossier.aTraiter)),
+            ],
+          ],
+          if (trouves.isEmpty && q.isNotEmpty)
+            const SgEmpty(
+              icon: Icons.search_off_rounded,
+              title: 'Aucun résultat',
+              message: 'Aucun dossier ne correspond à votre recherche.',
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+// ===========================================================================
+// Mode d'emploi (petites cartes en haut de l'écran)
+// ===========================================================================
+
+/// Trois petites cartes numérotées qui expliquent l'écran en un coup d'œil.
+class _Guide extends StatelessWidget {
+  const _Guide({required this.etapes});
+
+  /// Étapes du mode d'emploi (voir `guideDuRole`).
+  final List<EtapeGuide> etapes;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final (i, etape) in etapes.indexed) ...[
+          if (i > 0) const SizedBox(width: 8),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                border: Border.all(color: AppColors.line),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 22,
+                    height: 22,
+                    alignment: Alignment.center,
+                    decoration: const BoxDecoration(color: AppColors.ink, shape: BoxShape.circle),
+                    child: Text(
+                      '${i + 1}',
+                      style: const TextStyle(color: AppColors.gold, fontSize: 11.5, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(etape.titre, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text(
+                    etape.texte,
+                    style: const TextStyle(fontSize: 11.5, height: 1.3, color: AppColors.grey),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
       ],
     );
   }
+}
 
-  /// Ligne d'une version de document : numéro, date et actions.
-  Widget _docRow(Map<String, dynamic> document) {
-    final documentId = int.tryParse(document['id']?.toString() ?? '') ?? 0;
-    final version = document['version_number']?.toString() ?? '?';
+// ===========================================================================
+// Carte d'un dossier
+// ===========================================================================
+
+/// Carte toujours dépliée : qui, quoi, où on en est, et les boutons utiles.
+class _CarteDossier extends StatelessWidget {
+  const _CarteDossier({
+    required this.dossier,
+    required this.situation,
+    required this.vueEtudiant,
+    required this.enCours,
+    required this.onAction,
+    required this.onLire,
+    required this.onDetails,
+    this.onModifier,
+  });
+
+  /// Dossier affiché (réponse de /api/internship-folders/).
+  final Map<String, dynamic> dossier;
+
+  /// Situation calculée pour le rôle de l'utilisateur.
+  final SituationDossier situation;
+
+  /// Vrai pour l'étudiant propriétaire (en-tête : entreprise et sujet).
+  final bool vueEtudiant;
+
+  /// Vrai pendant une action sur ce dossier (boutons en attente).
+  final bool enCours;
+
+  /// Action principale choisie.
+  final ValueChanged<ActionDossier> onAction;
+
+  /// « Lire le rapport ».
+  final VoidCallback onLire;
+
+  /// « Détails et historique ».
+  final VoidCallback onDetails;
+
+  /// « Modifier » (étudiant : entreprise et sujet), ou `null` si interdit.
+  final VoidCallback? onModifier;
+
+  /// Texte du bouton d'une action, adapté au dossier.
+  String _libelle(ActionDossier action) => switch (action) {
+    ActionDossier.deposer => switch (dossier['status']?.toString()) {
+      _ when numeroDerniereVersion(dossier) == null => 'Déposer mon rapport (PDF)',
+      'a_corriger' => 'Déposer la version corrigée',
+      _ => 'Déposer une nouvelle version',
+    },
+    ActionDossier.envoyer => 'Envoyer à mon encadreur',
+    ActionDossier.accepter => 'Accepter le rapport',
+    ActionDossier.demanderCorrections => 'Demander des corrections',
+    ActionDossier.autoriser => 'Autoriser la soutenance',
+    ActionDossier.refuser => 'Refuser le dossier',
+    ActionDossier.rouvrir => 'Rouvrir le dossier',
+  };
+
+  /// Icône du bouton d'une action.
+  IconData _icone(ActionDossier action) => switch (action) {
+    ActionDossier.deposer => Icons.upload_file_rounded,
+    ActionDossier.envoyer => Icons.send_rounded,
+    ActionDossier.accepter => Icons.check_circle_rounded,
+    ActionDossier.demanderCorrections => Icons.edit_note_rounded,
+    ActionDossier.autoriser => Icons.verified_rounded,
+    ActionDossier.refuser => Icons.block_rounded,
+    ActionDossier.rouvrir => Icons.lock_open_rounded,
+  };
+
+  /// Variante du bouton : la 1re action est mise en avant (or), un refus
+  /// est en rouge, les autres sont discrètes.
+  SgBtnVariant _variante(ActionDossier action, int rang) {
+    if (action == ActionDossier.refuser) return SgBtnVariant.danger;
+    // L'or est réservé à ce qui est attendu de l'utilisateur ; une action
+    // possible mais non urgente (ex. rouvrir un dossier refusé) reste discrète.
+    if (!situation.aTraiter) return SgBtnVariant.outline;
+    return rang == 0 ? SgBtnVariant.primary : SgBtnVariant.outline;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final nom = _nomEtudiant(dossier);
+    final entreprise = (dossier['company_name'] ?? '').toString();
+    final sujet = (dossier['subject'] ?? '').toString();
+    final version = numeroDerniereVersion(dossier);
+    final corrections = commentaireCorrections(dossier);
+    final confidentiel = dossier['confidentialite']?.toString() == 'confidentiel';
+    // Pour décider, on LIT d'abord : le bouton « Lire » passe avant les
+    // décisions de l'encadreur et du personnel.
+    final lireEnPremier = !vueEtudiant && situation.aTraiter;
+
+    final boutonLire = version == null
+        ? null
+        : _GrosBouton(
+            'Lire le rapport (version $version)',
+            icon: confidentiel ? Icons.lock_outline_rounded : Icons.chrome_reader_mode_outlined,
+            variant: SgBtnVariant.outline,
+            onPressed: onLire,
+          );
+
+    return SgCard(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // --- Qui et quoi -------------------------------------------------
+          // Toucher le nom (geste naturel) ouvre « Plus d'actions et
+          // historique » : on n'a jamais l'impression qu'il ne se passe rien.
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: onDetails,
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (vueEtudiant)
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: AppColors.goldSoft,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(Icons.work_outline_rounded, color: AppColors.goldDeep),
+                        )
+                      else
+                        SgAvatar(initials: _initiales(nom), size: 44),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              vueEtudiant ? (entreprise.isEmpty ? 'Mon stage' : entreprise) : nom,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.ink,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              vueEtudiant
+                                  ? sujet
+                                  : [entreprise, sujet].where((s) => s.isNotEmpty).join(' · '),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 12.5, color: AppColors.grey, height: 1.35),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (onModifier != null) ...[
+                const SizedBox(width: 8),
+                SgButton(
+                  'Modifier',
+                  icon: Icons.edit_outlined,
+                  dense: true,
+                  variant: SgBtnVariant.outline,
+                  onPressed: onModifier,
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // --- Où on en est (phrase + étapes) ------------------------------
+          _BandeauSituation(situation: situation),
+          if (corrections != null &&
+              (dossier['status']?.toString() == 'a_corriger' || situation.aTraiter && vueEtudiant)) ...[
+            const SizedBox(height: 10),
+            _Citation(titre: 'Commentaire de l’encadreur', texte: corrections),
+          ],
+          if (situation.etape >= 0) ...[
+            const SizedBox(height: 14),
+            _BarreEtapes(etape: situation.etape),
+          ],
+          const SizedBox(height: 16),
+
+          // --- Les boutons utiles, et seulement eux ------------------------
+          if (lireEnPremier && boutonLire != null) ...[boutonLire, const SizedBox(height: 10)],
+          for (final (rang, action) in situation.actions.indexed) ...[
+            _GrosBouton(
+              _libelle(action),
+              icon: _icone(action),
+              variant: _variante(action, rang),
+              loading: enCours && rang == 0,
+              onPressed: enCours ? null : () => onAction(action),
+            ),
+            const SizedBox(height: 10),
+          ],
+          if (!lireEnPremier && boutonLire != null) ...[boutonLire, const SizedBox(height: 10)],
+          if (version == null && !vueEtudiant)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Aucun rapport déposé pour le moment.',
+                style: TextStyle(fontSize: 12.5, color: AppColors.grey),
+              ),
+            ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: onDetails,
+              icon: const Icon(Icons.history_rounded, size: 18),
+              label: Text(
+                vueEtudiant ? 'Versions et historique' : 'Plus d’actions et historique',
+              ),
+              style: TextButton.styleFrom(foregroundColor: AppColors.grey),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Bouton large et haut (52 px), facile à toucher avec le pouce.
+class _GrosBouton extends StatelessWidget {
+  const _GrosBouton(
+    this.label, {
+    required this.icon,
+    required this.variant,
+    this.onPressed,
+    this.loading = false,
+  });
+
+  final String label;
+  final IconData icon;
+  final SgBtnVariant variant;
+  final VoidCallback? onPressed;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    // Contrainte stricte : le bouton de la charte prend 52 px de haut et
+    // toute la largeur de la carte.
+    return SizedBox(
+      height: 52,
+      width: double.infinity,
+      child: SgButton(
+        label,
+        icon: icon,
+        variant: variant,
+        loading: loading,
+        onPressed: onPressed,
+      ),
+    );
+  }
+}
+
+/// Phrase de situation sur fond coloré : titre + explication.
+class _BandeauSituation extends StatelessWidget {
+  const _BandeauSituation({required this.situation});
+
+  final SituationDossier situation;
+
+  @override
+  Widget build(BuildContext context) {
+    final (couleur, fond, icone) = _styleHumeur(situation.humeur);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: fond,
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icone, color: couleur, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  situation.titre,
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: couleur),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  situation.explication,
+                  style: const TextStyle(fontSize: 13, color: AppColors.ink, height: 1.4),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Commentaire cité (demande de corrections), bien visible.
+class _Citation extends StatelessWidget {
+  const _Citation({required this.titre, required this.texte});
+
+  final String titre;
+  final String texte;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+      decoration: const BoxDecoration(
+        color: AppColors.surfaceAlt,
+        border: Border(left: BorderSide(color: AppColors.warning, width: 3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            titre,
+            style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.grey),
+          ),
+          const SizedBox(height: 4),
+          Text('« $texte »', style: const TextStyle(fontSize: 13.5, height: 1.45, color: AppColors.ink)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Barre des 4 étapes du parcours : faites (coche or), en cours (anneau
+/// or), à venir (gris).
+class _BarreEtapes extends StatelessWidget {
+  const _BarreEtapes({required this.etape});
+
+  /// Étape atteinte (0 à 3 ; 3 = parcours terminé).
+  final int etape;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final (i, libelle) in etapesParcours.indexed)
+          Expanded(
+            child: Semantics(
+              label: 'Étape ${i + 1} sur ${etapesParcours.length} : $libelle',
+              child: Column(
+                children: [
+                  _Pastille(
+                    faite: i < etape || etape == etapesParcours.length - 1,
+                    enCours: i == etape && etape != etapesParcours.length - 1,
+                    numero: i + 1,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    libelle,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    style: TextStyle(
+                      fontSize: 11,
+                      height: 1.25,
+                      fontWeight: i == etape ? FontWeight.w700 : FontWeight.w500,
+                      color: i <= etape ? AppColors.ink : AppColors.greyLight,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// Pastille ronde d'une étape.
+class _Pastille extends StatelessWidget {
+  const _Pastille({required this.faite, required this.enCours, required this.numero});
+
+  final bool faite;
+  final bool enCours;
+  final int numero;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 28,
+      height: 28,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: faite ? AppColors.gold : Colors.white,
+        border: Border.all(
+          color: faite || enCours ? AppColors.gold : AppColors.line,
+          width: enCours ? 2.5 : 1.5,
+        ),
+      ),
+      child: faite
+          ? const Icon(Icons.check_rounded, size: 16, color: AppColors.ink)
+          : Text(
+              '$numero',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: enCours ? AppColors.goldDeep : AppColors.greyLight,
+              ),
+            ),
+    );
+  }
+}
+
+// ===========================================================================
+// Fenêtre de décision
+// ===========================================================================
+
+/// Fenêtre « êtes-vous sûr ? » qui dit ce qui va se passer, avec un champ
+/// de commentaire facultatif ou obligatoire.
+class _DialogueDecision extends StatefulWidget {
+  const _DialogueDecision({
+    required this.titre,
+    required this.message,
+    required this.bouton,
+    required this.icone,
+    this.danger = false,
+    this.champ,
+    this.champObligatoire = false,
+    this.exemple,
+  });
+
+  final String titre;
+  final String message;
+  final String bouton;
+  final IconData icone;
+
+  /// Décision lourde (refus) : couleurs rouges.
+  final bool danger;
+
+  /// Libellé du champ de commentaire, ou `null` pour ne pas en afficher.
+  final String? champ;
+
+  /// Vrai si le commentaire doit être rempli.
+  final bool champObligatoire;
+
+  /// Exemple affiché dans le champ vide.
+  final String? exemple;
+
+  @override
+  State<_DialogueDecision> createState() => _DialogueDecisionState();
+}
+
+/// État de la fenêtre : texte saisi et message d'erreur éventuel.
+class _DialogueDecisionState extends State<_DialogueDecision> {
+  final _texte = TextEditingController();
+  String? _erreur;
+
+  @override
+  void dispose() {
+    _texte.dispose();
+    super.dispose();
+  }
+
+  /// Valide : un commentaire obligatoire vide est signalé sous le champ.
+  void _valider() {
+    final texte = _texte.text.trim();
+    if (widget.champ != null && widget.champObligatoire && texte.isEmpty) {
+      setState(() => _erreur = 'Écrivez quelques mots : la personne concernée saura quoi faire.');
+      return;
+    }
+    Navigator.pop(context, texte);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final couleur = widget.danger ? AppColors.danger : AppColors.goldDeep;
+    return AlertDialog(
+      icon: Icon(widget.icone, color: couleur, size: 34),
+      title: Text(widget.titre, textAlign: TextAlign.center),
+      content: SizedBox(
+        width: 440,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(widget.message, style: const TextStyle(fontSize: 14, height: 1.45)),
+            if (widget.champ != null) ...[
+              const SizedBox(height: 16),
+              TextField(
+                controller: _texte,
+                autofocus: widget.champObligatoire,
+                minLines: 2,
+                maxLines: 5,
+                onChanged: (_) {
+                  if (_erreur != null) setState(() => _erreur = null);
+                },
+                decoration: InputDecoration(
+                  labelText: widget.champObligatoire
+                      ? widget.champ
+                      : '${widget.champ} (facultatif)',
+                  hintText: widget.exemple,
+                  errorText: _erreur,
+                  errorMaxLines: 2,
+                  alignLabelWithHint: true,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actionsAlignment: MainAxisAlignment.spaceBetween,
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+        SgButton(
+          widget.bouton,
+          icon: widget.icone,
+          variant: widget.danger ? SgBtnVariant.danger : SgBtnVariant.primary,
+          onPressed: _valider,
+        ),
+      ],
+    );
+  }
+}
+
+// ===========================================================================
+// Panneau « Détails et historique »
+// ===========================================================================
+
+/// Panneau inférieur : versions du rapport (avec leurs avis), historique
+/// des étapes, et actions rares selon le rôle.
+class _DetailsDossier extends StatefulWidget {
+  const _DetailsDossier({
+    required this.service,
+    required this.dossier,
+    required this.role,
+    required this.onLire,
+    required this.onConfidentialite,
+  });
+
+  final DocumentService service;
+  final Map<String, dynamic> dossier;
+  final String? role;
+
+  /// Lecture d'une version précise (identifiant, numéro).
+  final void Function(int versionId, int numero) onLire;
+
+  /// Changement de confidentialité (personnel).
+  final Future<void> Function(bool confidentiel) onConfidentialite;
+
+  @override
+  State<_DetailsDossier> createState() => _DetailsDossierState();
+}
+
+/// Données du panneau, chargées à son ouverture.
+class _DonneesDetails {
+  const _DonneesDetails(this.versions, this.avis, this.historique);
+
+  final List<Map<String, dynamic>> versions;
+  final Map<int, List<Map<String, dynamic>>> avis;
+  final List<Map<String, dynamic>> historique;
+}
+
+/// État du panneau : chargement et confidentialité affichée.
+class _DetailsDossierState extends State<_DetailsDossier> {
+  late final Future<_DonneesDetails> _donnees = _chargerDonnees();
+  late bool _confidentiel = widget.dossier['confidentialite']?.toString() == 'confidentiel';
+
+  int get _id => int.tryParse(widget.dossier['id']?.toString() ?? '') ?? 0;
+  String get _statut => widget.dossier['status']?.toString() ?? '';
+  bool get _personnel => widget.role == 'admin' || widget.role == 'responsible';
+
+  /// Versions, avis (en un appel) et historique du dossier.
+  Future<_DonneesDetails> _chargerDonnees() async {
+    final versions = await widget.service.getDocuments(_id);
+    versions.sort(
+      (a, b) => (int.tryParse(b['version_number']?.toString() ?? '') ?? 0)
+          .compareTo(int.tryParse(a['version_number']?.toString() ?? '') ?? 0),
+    );
+    final ids = versions.map((v) => int.tryParse(v['id']?.toString() ?? '') ?? 0);
+    // Un rôle sans droit de lecture des avis reçoit simplement une liste vide.
+    final avis = await widget.service.getReviewsParVersion(ids).catchError(
+      (_) => <int, List<Map<String, dynamic>>>{},
+    );
+    final historique = await widget.service.historique(_id);
+    return _DonneesDetails(versions, avis, historique);
+  }
+
+  /// Actions rares proposées selon le rôle et l'état du dossier.
+  List<(String, IconData, _ChoixDetails, bool)> get _autresActions {
+    final etudiant = widget.role == 'student';
+    return [
+      if (etudiant && const {'soumis', 'valide', 'recevable'}.contains(_statut))
+        ('Déposer une nouvelle version', Icons.upload_file_rounded, _ChoixDetails.deposer, false),
+      if (widget.role == 'admin' && _statut == 'soumis') ...[
+        ('Accepter à la place de l’encadreur', Icons.check_circle_outline_rounded, _ChoixDetails.accepter, false),
+        ('Demander des corrections', Icons.edit_note_rounded, _ChoixDetails.corrections, false),
+      ],
+      if (_personnel && const {'soumis', 'a_corriger'}.contains(_statut))
+        ('Refuser le dossier', Icons.block_rounded, _ChoixDetails.refuser, true),
+      if (_personnel && _statut == 'recevable')
+        ('Rouvrir le dossier', Icons.lock_open_rounded, _ChoixDetails.rouvrir, false),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final nom = _nomEtudiant(widget.dossier);
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.85),
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          children: [
+            Text(
+              widget.role == 'student' ? 'Mon dossier' : nom,
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              [widget.dossier['company_name'], widget.dossier['subject']]
+                  .where((v) => (v ?? '').toString().isNotEmpty)
+                  .join(' · '),
+              style: const TextStyle(fontSize: 12.5, color: AppColors.grey),
+            ),
+            const SizedBox(height: 18),
+            FutureBuilder<_DonneesDetails>(
+              future: _donnees,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const SgLoading(message: 'Chargement…');
+                }
+                if (snapshot.hasError) {
+                  return SgBanner(message: _message(snapshot.error!), tone: SgTone.danger);
+                }
+                return _contenu(snapshot.data!);
+              },
+            ),
+            if (_autresActions.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              const SgOverline('Autres actions'),
+              const SizedBox(height: 8),
+              for (final (libelle, icone, choix, danger) in _autresActions)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: SgButton(
+                    libelle,
+                    icon: icone,
+                    expand: true,
+                    variant: danger ? SgBtnVariant.danger : SgBtnVariant.outline,
+                    onPressed: () => Navigator.pop(context, choix),
+                  ),
+                ),
+            ],
+            if (_personnel) ...[
+              const SizedBox(height: 8),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _confidentiel,
+                onChanged: (valeur) async {
+                  setState(() => _confidentiel = valeur);
+                  await widget.onConfidentialite(valeur);
+                },
+                title: const Text('Rapport confidentiel', style: TextStyle(fontSize: 14)),
+                subtitle: const Text(
+                  'Seuls l’étudiant, ses encadreurs et les personnes habilitées pourront le lire.',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Versions (chacune avec ses avis et un bouton « Lire »), puis historique.
+  Widget _contenu(_DonneesDetails d) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SgOverline('Versions du rapport'),
+        const SizedBox(height: 8),
+        if (d.versions.isEmpty)
+          const Text('Aucun rapport déposé pour le moment.', style: TextStyle(fontSize: 13, color: AppColors.grey))
+        else
+          for (final v in d.versions) _ligneVersion(v, d.avis),
+        const SizedBox(height: 16),
+        const SgOverline('Historique'),
+        const SizedBox(height: 6),
+        if (d.historique.isEmpty)
+          const Text('Aucune étape enregistrée pour le moment.', style: TextStyle(fontSize: 13, color: AppColors.grey))
+        else
+          for (final l in d.historique.reversed) _ligneHistorique(l),
+      ],
+    );
+  }
+
+  /// Une version : numéro, date, avis reçus et bouton « Lire ».
+  Widget _ligneVersion(Map<String, dynamic> v, Map<int, List<Map<String, dynamic>>> avis) {
+    final id = int.tryParse(v['id']?.toString() ?? '') ?? 0;
+    final numero = int.tryParse(v['version_number']?.toString() ?? '') ?? 0;
+    final avisVersion = avis[id] ?? const [];
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
@@ -676,414 +1518,102 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         border: Border.all(color: AppColors.line),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Étiquette de version « V1, V2… ».
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-            decoration: BoxDecoration(
-              color: AppColors.ink,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              'V$version',
-              style: const TextStyle(
-                color: AppColors.goldDeep,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Rapport de stage (PDF)',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Déposé le ${_fmtDate(document['uploaded_at']?.toString())}',
-                  style: const TextStyle(fontSize: 11.5, color: AppColors.grey),
-                ),
-              ],
-            ),
-          ),
-          SgIconBtn(
-            icon: Icons.rate_review_outlined,
-            tooltip: 'Voir les avis',
-            tone: SgTone.info,
-            onPressed: () => _ouvrirAvis(documentId),
-          ),
-          const SizedBox(width: 6),
-          SgIconBtn(
-            icon: Icons.download_rounded,
-            tooltip: 'Télécharger',
-            tone: SgTone.gold,
-            onPressed: () => _download(documentId),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Panneau inférieur : consultation des avis et dépôt d'un nouvel avis
-/// (dépôt réservé aux encadreurs et administrateurs).
-class _AvisSheet extends StatefulWidget {
-  const _AvisSheet({
-    required this.service,
-    required this.documentId,
-    required this.peutDonnerAvis,
-  });
-
-  /// Service documentaire.
-  final DocumentService service;
-
-  /// Version de document concernée.
-  final int documentId;
-
-  /// Vrai si le formulaire d'avis doit être proposé.
-  final bool peutDonnerAvis;
-
-  @override
-  State<_AvisSheet> createState() => _AvisSheetState();
-}
-
-/// État du panneau des avis.
-class _AvisSheetState extends State<_AvisSheet> {
-  /// Chargement des avis existants.
-  late Future<List<Map<String, dynamic>>> _avisFuture;
-
-  /// Décision choisie : `favorable` ou `defavorable`.
-  String? _decision;
-
-  /// Commentaires facultatifs.
-  final TextEditingController _commentaires = TextEditingController();
-
-  /// Vrai pendant l'envoi.
-  bool _envoiEnCours = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _avisFuture = widget.service.getReviews(widget.documentId);
-  }
-
-  @override
-  void dispose() {
-    _commentaires.dispose();
-    super.dispose();
-  }
-
-  /// Envoie l'avis saisi puis ferme le panneau.
-  Future<void> _envoyerAvis() async {
-    final decision = _decision;
-    if (decision == null) {
-      SgToast.show(
-        context,
-        'Choisissez une décision : favorable ou défavorable.',
-        tone: SgTone.danger,
-      );
-      return;
-    }
-
-    setState(() => _envoiEnCours = true);
-    // Messager capturé avant la fermeture du panneau : après `pop`, le
-    // contexte du panneau n'est plus utilisable pour afficher un toast.
-    final messenger = ScaffoldMessenger.of(context);
-    final navigator = Navigator.of(context);
-    try {
-      await widget.service.addReview(
-        widget.documentId,
-        decision,
-        _commentaires.text,
-      );
-      navigator.pop();
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Avis enregistré avec succès.')),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _envoiEnCours = false);
-      SgToast.show(context, _message(e), tone: SgTone.danger);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        // Le clavier virtuel repousse le contenu vers le haut.
-        padding: EdgeInsets.only(
-          left: 20,
-          right: 20,
-          bottom: MediaQuery.of(context).viewInsets.bottom + 20,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: AppColors.goldSoft,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.rate_review_rounded,
-                    size: 18,
-                    color: AppColors.goldDeep,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                const Expanded(
-                  child: Text(
-                    'Avis sur ce document',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 15,
-                      color: AppColors.ink,
-                    ),
-                  ),
-                ),
-                SgIconBtn(
-                  icon: Icons.close_rounded,
-                  tooltip: 'Fermer',
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Flexible(
-              child: FutureBuilder<List<Map<String, dynamic>>>(
-                future: _avisFuture,
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const SgLoading();
-                  }
-                  if (snapshot.hasError) {
-                    return SgBanner(
-                      message: _message(snapshot.error!),
-                      tone: SgTone.danger,
-                    );
-                  }
-
-                  final avis = snapshot.data ?? const [];
-                  if (avis.isEmpty) {
-                    return const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8),
-                      child: Text(
-                        'Aucun avis pour le moment.',
-                        style: TextStyle(fontSize: 13, color: AppColors.grey),
-                      ),
-                    );
-                  }
-
-                  return ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: avis.length,
-                    itemBuilder: (context, index) => _avisTile(avis[index]),
-                  );
-                },
-              ),
-            ),
-            if (widget.peutDonnerAvis) ...[
-              const SizedBox(height: 8),
-              const Divider(),
-              const SizedBox(height: 12),
-              const Text(
-                'Donner un avis',
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 14,
-                  color: AppColors.ink,
-                ),
-              ),
-              // Le groupe de boutons radio est géré par un RadioGroup ancêtre.
-              RadioGroup<String>(
-                groupValue: _decision,
-                onChanged: (valeur) => setState(() => _decision = valeur),
-                child: const Column(
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    RadioListTile<String>(
-                      value: 'favorable',
-                      title: Text(
-                        'Favorable (valider le document)',
-                        style: TextStyle(fontSize: 13),
-                      ),
-                      activeColor: AppColors.success,
-                      contentPadding: EdgeInsets.zero,
-                    ),
-                    RadioListTile<String>(
-                      value: 'defavorable',
-                      title: Text(
-                        'Défavorable (demander des corrections)',
-                        style: TextStyle(fontSize: 13),
-                      ),
-                      activeColor: AppColors.danger,
-                      contentPadding: EdgeInsets.zero,
+                    Text('Version $numero', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                    Text(
+                      'Déposée le ${_fmtDate(v['uploaded_at']?.toString())}',
+                      style: const TextStyle(fontSize: 12, color: AppColors.grey),
                     ),
                   ],
                 ),
               ),
-              TextField(
-                controller: _commentaires,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  hintText: 'Commentaires (facultatif)',
-                ),
-              ),
-              const SizedBox(height: 14),
               SgButton(
-                'Envoyer l’avis',
-                icon: Icons.send_rounded,
-                variant: SgBtnVariant.dark,
-                expand: true,
-                loading: _envoiEnCours,
-                onPressed: _envoyerAvis,
+                'Lire',
+                icon: Icons.chrome_reader_mode_outlined,
+                dense: true,
+                variant: SgBtnVariant.outline,
+                onPressed: () => widget.onLire(id, numero),
               ),
             ],
+          ),
+          for (final a in avisVersion) ...[
+            const SizedBox(height: 8),
+            _ligneAvis(a),
           ],
-        ),
-      ),
-    );
-  }
-
-  /// Ligne d'un avis : décision, auteur, commentaire et date.
-  Widget _avisTile(Map<String, dynamic> item) {
-    final favorable = item['decision'] == 'favorable';
-    final commentaire = (item['comments'] ?? '').toString();
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: favorable ? AppColors.successBg : AppColors.dangerBg,
-        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            favorable
-                ? Icons.thumb_up_alt_outlined
-                : Icons.thumb_down_alt_outlined,
-            size: 17,
-            color: favorable ? AppColors.success : AppColors.danger,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${item['author_role'] ?? 'Auteur'} — '
-                  '${favorable ? 'favorable' : 'défavorable'}',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                if (commentaire.isNotEmpty) ...[
-                  const SizedBox(height: 3),
-                  Text(
-                    commentaire,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppColors.ink,
-                      height: 1.4,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          Text(
-            _fmtDate(item['created_at']?.toString()),
-            style: const TextStyle(fontSize: 11, color: AppColors.grey),
-          ),
         ],
       ),
     );
   }
-}
 
-/// Panneau inférieur : historique des étapes d'un dossier (preuves).
-class _HistoriqueSheet extends StatelessWidget {
-  const _HistoriqueSheet({required this.future});
-
-  /// Chargement de l'historique.
-  final Future<List<Map<String, dynamic>>> future;
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Historique du dossier',
-              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-            ),
-            const SizedBox(height: 12),
-            Flexible(
-              child: FutureBuilder<List<Map<String, dynamic>>>(
-                future: future,
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const SgLoading();
-                  }
-                  if (snapshot.hasError) {
-                    return SgBanner(message: _message(snapshot.error!), tone: SgTone.danger);
-                  }
-                  final lignes = snapshot.data ?? const [];
-                  if (lignes.isEmpty) {
-                    return const Text(
-                      'Aucune étape enregistrée pour le moment.',
-                      style: TextStyle(fontSize: 13, color: AppColors.grey),
-                    );
-                  }
-                  return ListView(
-                    shrinkWrap: true,
-                    children: [
-                      for (final l in lignes.reversed)
-                        ListTile(
-                          dense: true,
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(Icons.timeline_rounded, color: AppColors.goldDeep),
-                          title: Text(
-                            '${l['evenement']} : ${libelleStatut(l['statut_avant']?.toString() ?? '')}'
-                            ' → ${libelleStatut(l['statut_apres']?.toString() ?? '')}',
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                          ),
-                          subtitle: Text(
-                            [
-                              _fmtDate(l['created_at']?.toString()),
-                              if (l['acteur_nom'] != null) 'par ${l['acteur_nom']}',
-                              if (l['version'] != null) 'V${l['version']}',
-                              if ((l['motif'] ?? '').toString().isNotEmpty) '« ${l['motif']} »',
-                            ].join(' · '),
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
-            ),
-          ],
+  /// Un avis : favorable (vert) ou corrections demandées (orange).
+  Widget _ligneAvis(Map<String, dynamic> a) {
+    final favorable = a['decision']?.toString() == 'favorable';
+    final commentaire = (a['comments'] ?? '').toString().trim();
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          favorable ? Icons.check_circle_rounded : Icons.edit_note_rounded,
+          size: 18,
+          color: favorable ? AppColors.success : AppColors.warning,
         ),
-      ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            '${favorable ? 'Accepté' : 'Corrections demandées'} le '
+            '${_fmtDate(a['created_at']?.toString())}'
+            '${commentaire.isEmpty ? '' : ' : « $commentaire »'}',
+            style: const TextStyle(fontSize: 12.5, height: 1.4),
+          ),
+        ),
+      ],
     );
   }
+
+  /// Une étape de l'historique, en mots simples.
+  Widget _ligneHistorique(Map<String, dynamic> l) {
+    final motif = (l['motif'] ?? '').toString().trim();
+    final details = [
+      _fmtDate(l['created_at']?.toString()),
+      if (l['acteur_nom'] != null) 'par ${l['acteur_nom']}',
+      if (motif.isNotEmpty) '« $motif »',
+    ].join(' · ');
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.radio_button_checked_rounded, color: AppColors.goldDeep, size: 18),
+      title: Text(
+        _evenementLisible(l['evenement']?.toString() ?? '', l['statut_apres']?.toString() ?? ''),
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+      ),
+      subtitle: Text(details, style: const TextStyle(fontSize: 12)),
+    );
+  }
+
+  /// Traduit un événement technique de l'historique en phrase simple.
+  String _evenementLisible(String evenement, String statutApres) => switch (evenement) {
+    'nouvelle_version' => 'Nouvelle version déposée',
+    'soumettre' => 'Rapport envoyé à l’encadreur',
+    'avis_favorable' => 'Rapport accepté par l’encadreur',
+    'demander_correction' => 'Corrections demandées',
+    'autoriser_soutenance' => 'Soutenance autorisée',
+    'refuser' => 'Dossier refusé',
+    'rouvrir' => 'Dossier rouvert',
+    _ => '${evenement.replaceAll('_', ' ')} → ${libelleStatut(statutApres)}',
+  };
 }
+
+// ===========================================================================
+// Création / modification du dossier (étudiant)
+// ===========================================================================
 
 /// Boîte de dialogue de création / modification d'un dossier de stage
 /// (entreprise d'accueil et sujet).
@@ -1156,8 +1686,7 @@ class _FolderDialogState extends State<_FolderDialog> {
               if (creation) ...[
                 const SizedBox(height: 12),
                 const Text(
-                  'Le dossier est créé au statut « Brouillon » pour la campagne '
-                  'en cours ; la scolarité le déclarera ensuite recevable.',
+                  'Étape suivante : déposer votre rapport au format PDF.',
                   style: TextStyle(fontSize: 12, color: AppColors.grey),
                 ),
               ],

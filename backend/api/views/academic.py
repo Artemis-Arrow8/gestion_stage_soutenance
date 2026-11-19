@@ -128,8 +128,14 @@ class InternshipFolderViewSet(viewsets.ModelViewSet):
     # de l'appelant renvoie 404 (son existence n'est pas révélée).
 
     def _repondre(self, dossier):
-        """Renvoie le dossier à jour après une transition."""
-        dossier.refresh_from_db()
+        """
+        Renvoie le dossier à jour après une transition.
+
+        Le dossier est relu par le queryset de la vue (et non par
+        `refresh_from_db`) : les versions, avis et historique préchargés
+        reflètent ainsi la transition qui vient d'être enregistrée.
+        """
+        dossier = self.get_queryset().get(pk=dossier.pk)
         return Response(self.get_serializer(dossier).data)
 
     @action(detail=True, methods=['post'])
@@ -209,7 +215,14 @@ class InternshipFolderViewSet(viewsets.ModelViewSet):
         # `super().get_queryset()` renvoie une COPIE fraîche du queryset de
         # classe : sans elle, le résultat de la première liste resterait en
         # cache dans le processus et les nouvelles lignes seraient invisibles.
-        base = super().get_queryset()
+        # Préchargement des champs d'affichage du sérialiseur (étudiant,
+        # versions, avis, historique) : nombre de requêtes constant, quel
+        # que soit le nombre de dossiers listés.
+        base = (
+            super().get_queryset()
+            .select_related('student', 'confidentialite')
+            .prefetch_related('document_versions__reviews', 'historique')
+        )
         role = get_user_role(self.request.user)
         student = etudiant_du_compte(self.request.user)
         if role in ('admin', 'responsible'):
