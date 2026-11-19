@@ -1,0 +1,28 @@
+@startuml sequence_evaluation
+autonumber
+actor Responsable
+actor "Étudiant" as ETU
+participant "EvaluationsScreen" as UI
+participant "API Django\n(AssessmentViewSet)" as V
+database PostgreSQL as DB
+participant "ProfileScreen" as PR
+
+Responsable -> UI : saisit note rapport + note oral
+UI -> UI : afficher la moyenne en direct
+Responsable -> UI : coche « Valider la note » puis Enregistrer
+UI -> V : POST /api/assessments/ { defense, notes, is_approved }
+V -> V : une seule évaluation par soutenance ?\nmoyenne = (rapport + oral) / 2 (Decimal)
+alt soutenance déjà évaluée
+  V --> UI : 400 « déjà une évaluation »
+else création
+  V -> DB : INSERT assessment
+  V --> UI : 201 { évaluation }
+end
+
+== Plus tard ==
+ETU -> PR : ouvre « Mon profil »
+PR -> V : GET /api/profile/
+V -> DB : soutenance du dossier + évaluation validée ?
+V --> PR : { defense: { ..., final_average } }
+PR --> ETU : affiche la note finale validée
+@enduml

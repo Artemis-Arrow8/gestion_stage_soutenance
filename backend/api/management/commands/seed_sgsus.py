@@ -7,8 +7,8 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core.files.base import ContentFile
-from django.core.management.base import BaseCommand, CommandError
 from django.core.files.storage import default_storage
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.db.backends.postgresql.psycopg_any import DateTimeTZRange
 
@@ -27,7 +27,6 @@ from api.models import (
     StudentAccount,
 )
 from api.roles import ROLE_GROUPS
-
 
 User = get_user_model()
 
@@ -241,7 +240,7 @@ class Command(BaseCommand):
             ("student3", "demo.etudiant3", "Université de Bamako", "Tableau de bord des inscriptions", "brouillon"),
         )
         dossiers = []
-        for cle, username, entreprise, sujet, statut in eleves:
+        for cle, _identifiant, entreprise, sujet, statut in eleves:
             compte = comptes[cle]
             etudiant = compte.student_account.student
             dossier, _ = InternshipFolder.objects.get_or_create(

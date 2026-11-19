@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 $Container = "gestion_stage_soutenance-db-1"
 $BackupPath = Join-Path (Split-Path -Parent $PSScriptRoot) "backup_docker.sql"

@@ -67,6 +67,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   texte: 'Vous siégez sous le nom « ${user['jury_member_name']} ».',
                 ),
               ],
+              // Convocations (étudiant et jury), versions remplacées comprises.
+              if (auth.role == 'student' || auth.role == 'jury') ...[
+                const SizedBox(height: 16),
+                _ConvocationsCard(api: auth.api),
+              ],
             ],
           );
           const formulaire = _PasswordCard();
@@ -414,6 +419,9 @@ class _PasswordCardState extends State<_PasswordCard> {
       _actuel.clear();
       _nouveau.clear();
       _confirmation.clear();
+      // Plus rien à enregistrer : le geste « retour » quitte la page
+      // sans demander de confirmation.
+      SgFormulaire.marquerEnregistre(_formKey);
       SgToast.show(context, 'Mot de passe modifié avec succès.');
     } on ApiException catch (e) {
       if (mounted) setState(() => _erreur = e.message);
@@ -437,8 +445,8 @@ class _PasswordCardState extends State<_PasswordCard> {
   @override
   Widget build(BuildContext context) {
     return SgCard(
-      child: Form(
-        key: _formKey,
+      child: SgFormulaire(
+        formKey: _formKey,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -516,5 +524,98 @@ class _PasswordCardState extends State<_PasswordCard> {
         ),
       ),
     );
+  }
+}
+
+
+/// Mes convocations aux soutenances (chapitre 2 : l'étudiant « consulte
+/// ses convocations »). Chaque convocation indique la version du planning
+/// qui l'a produite ; après un report, l'ancienne reste visible, marquée
+/// « Remplacée » avec la version qui la remplace (STA07).
+class _ConvocationsCard extends StatefulWidget {
+  const _ConvocationsCard({required this.api});
+
+  /// Client authentifié.
+  final ApiService api;
+
+  @override
+  State<_ConvocationsCard> createState() => _ConvocationsCardState();
+}
+
+/// État de la carte : chargement des convocations du compte.
+class _ConvocationsCardState extends State<_ConvocationsCard> {
+  late final Future<List<Map<String, dynamic>>> _convocations =
+      widget.api.getList('convocations/');
+
+  @override
+  Widget build(BuildContext context) {
+    return SgCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SgOverline('Mes convocations'),
+          const SizedBox(height: 12),
+          FutureBuilder<List<Map<String, dynamic>>>(
+            future: _convocations,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const SgLoading();
+              }
+              final liste = snapshot.data ?? const [];
+              if (liste.isEmpty) {
+                return const Text(
+                  'Aucune convocation : le planning n’a pas encore été publié.',
+                  style: TextStyle(fontSize: 12.5, color: AppColors.grey),
+                );
+              }
+              return Column(
+                children: [
+                  for (final c in liste.reversed)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          SgBadge('v${c['version']}', tone: SgTone.gold, dot: false),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _quand(c['debut']?.toString()),
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                Text(
+                                  'Salle ${c['salle']} · ${c['jury']} · ${c['role_destinataire']}'
+                                  '${c['remplacee_par_version'] != null ? ' · remplacée par la v${c['remplacee_par_version']}' : ''}',
+                                  style: const TextStyle(fontSize: 12, color: AppColors.grey),
+                                ),
+                              ],
+                            ),
+                          ),
+                          SgStatusBadge(c['statut']?.toString() ?? ''),
+                        ],
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Date et heure locales d'une convocation (« lundi 14 décembre 2026, 08:00 »).
+  static String _quand(String? iso) {
+    final instant = DateTime.tryParse(iso ?? '')?.toLocal();
+    if (instant == null) return '—';
+    final heure = '${instant.hour.toString().padLeft(2, '0')}:'
+        '${instant.minute.toString().padLeft(2, '0')}';
+    return '${longDate(instant)}, $heure';
   }
 }

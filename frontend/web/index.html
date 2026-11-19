@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="fr">
 <head>
   <!--
     If you are serving your web app in a path other than the root, change the
@@ -18,18 +18,21 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="SGSUS : suivi des stages, dépôt des rapports, planning et évaluation des soutenances.">
+  <!-- Barre du navigateur (Samsung Internet, Chrome) aux couleurs de la charte. -->
+  <meta name="theme-color" content="#0B0B0C">
 
-  <!-- iOS meta tags & icons -->
+  <!-- Installation sur l'écran d'accueil (« Ajouter à l'écran d'accueil ») :
+       l'application s'ouvre alors en plein écran, comme une application. -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="frontend">
+  <meta name="apple-mobile-web-app-title" content="SGSUS">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>frontend</title>
+  <title>SGSUS</title>
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
@@ -41,6 +44,36 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
+  <script>
+    // Mode hors ligne du site : installe le service worker « sw_hors_ligne.js »
+    // (copie des fichiers de l'application, voir ce fichier). Uniquement sur
+    // une adresse sécurisée (https, ou localhost sur le PC) : c'est une règle
+    // des navigateurs.
+    if ('serviceWorker' in navigator && window.isSecureContext) {
+      // Envoie au service worker la liste des fichiers déjà chargés par la
+      // page, pour que la toute première visite soit conservée en entier.
+      function sgsusSignalerFichiers() {
+        navigator.serviceWorker.ready.then(function (enregistrement) {
+          if (!enregistrement.active) return;
+          var urls = performance.getEntriesByType('resource').map(function (e) {
+            return e.name;
+          });
+          enregistrement.active.postMessage({ type: 'mettre-en-cache', urls: urls });
+        });
+      }
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw_hors_ligne.js').catch(function (erreur) {
+          console.warn('Mode hors ligne indisponible :', erreur);
+        });
+      });
+      // Première image affichée : moteur et polices sont chargés. Un second
+      // envoi récupère ce qui se charge pendant les premières secondes.
+      window.addEventListener('flutter-first-frame', function () {
+        sgsusSignalerFichiers();
+        setTimeout(sgsusSignalerFichiers, 15000);
+      });
+    }
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

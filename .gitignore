@@ -46,3 +46,8 @@ backup_docker.sql
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Rapports produits par scripts/ci.sh (tests JUnit, couverture)
+report.xml
+coverage.xml
+htmlcov/

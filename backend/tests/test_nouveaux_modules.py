@@ -2,8 +2,8 @@
 Tests des fonctionnalités ajoutées pour les nouveaux écrans Flutter :
     * profil étudiant enrichi (dossier, soutenance, note validée) ;
     * changement de son propre mot de passe ;
-    * évaluations : moyenne automatique et unicité par soutenance ;
-    * soutenances : changement de statut et suppression par le personnel.
+    * évaluations : moyenne automatique (grille 40/60) et unicité par soutenance ;
+    * soutenances : confirmation (action dédiée) et suppression par le personnel.
 """
 
 from decimal import Decimal
@@ -13,7 +13,7 @@ from django.contrib.auth.models import Group
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from api.models import Assessment, Defense, StudentAccount
+from api.models import Assessment, Campaign, Defense, StudentAccount
 
 from .factories import creer_defense, creer_dossier, creer_jury, creneau
 
@@ -79,7 +79,12 @@ class CreationDossierParEtudiantTests(TestCase):
 
     def test_la_campagne_active_est_utilisee_par_defaut(self):
         """Sans campagne fournie, le dossier rejoint la campagne active."""
-        dossier_existant = creer_dossier()  # crée aussi une campagne active
+        dossier_existant = creer_dossier()
+        # La campagne de ce dossier est close ; une nouvelle campagne est
+        # active : l'étudiant n'y a pas encore de dossier (un seul par campagne).
+        dossier_existant.campaign.is_active = False
+        dossier_existant.campaign.save()
+        Campaign.objects.create(academic_year='2027-2028', is_active=True)
         etudiant = User.objects.create_user(username='etu.nouveau', password=MDP)
         StudentAccount.objects.create(user=etudiant, student=dossier_existant.student)
         client = APIClient()
@@ -153,15 +158,20 @@ class EvaluationsEtSoutenancesTests(TestCase):
         )
 
     def test_la_moyenne_est_calculee_automatiquement(self):
-        """Sans moyenne fournie, elle vaut la moyenne rapport / oral."""
+        """
+        La moyenne est calculée par le serveur avec la grille fictive 40/60
+        (STA10) : 0,4 × 14 + 0,6 × 17 = 15,80. Une moyenne envoyée par le
+        client est ignorée.
+        """
         reponse = self.client.post('/api/assessments/', {
             'defense': self.defense.pk,
             'report_grade': '14.00',
             'oral_grade': '17.00',
+            'final_average': '20.00',
         }, format='json')
 
         self.assertEqual(reponse.status_code, 201, reponse.content)
-        self.assertEqual(Decimal(reponse.json()['final_average']), Decimal('15.50'))
+        self.assertEqual(Decimal(reponse.json()['final_average']), Decimal('15.80'))
         self.assertTrue(reponse.json()['student_name'])
 
     def test_une_seule_evaluation_par_soutenance(self):
@@ -176,11 +186,23 @@ class EvaluationsEtSoutenancesTests(TestCase):
         self.assertEqual(reponse.status_code, 400)
 
     def test_changement_de_statut_d_une_soutenance(self):
-        """Le personnel peut confirmer une soutenance sans changer son créneau."""
+        """
+        Le statut ne se modifie pas directement : la confirmation passe par
+        l'action dédiée, qui exige un jury déclaré complet (F04).
+        """
         reponse = self.client.patch(
             f'/api/soutenances/{self.defense.pk}/', {'status': 'confirme'}, format='json',
         )
+        self.defense.refresh_from_db()
+        self.assertEqual(self.defense.status, 'planifie')  # champ en lecture seule
 
+        refus = self.client.post(f'/api/soutenances/{self.defense.pk}/confirmer/')
+        self.assertEqual(refus.status_code, 409, refus.content)
+        self.assertEqual(refus.json()['regle'], 'F04')
+
+        self.defense.jury.is_complete = True
+        self.defense.jury.save()
+        reponse = self.client.post(f'/api/soutenances/{self.defense.pk}/confirmer/')
         self.assertEqual(reponse.status_code, 200, reponse.content)
         self.defense.refresh_from_db()
         self.assertEqual(self.defense.status, 'confirme')

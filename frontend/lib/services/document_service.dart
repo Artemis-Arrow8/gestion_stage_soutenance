@@ -49,12 +49,49 @@ class DocumentService {
     });
   }
 
-  /// Change le statut du dossier [folderId] (réservé au personnel).
+  /// Applique une transition au dossier [folderId] (chapitre 4).
   ///
-  /// Valeurs usuelles : `brouillon`, `soumis`, `recevable`, `rejete`.
-  /// Un dossier « recevable » devient planifiable en soutenance.
-  Future<void> setFolderStatus(int folderId, String status) async {
-    await api.patch('internship-folders/$folderId/', {'status': status});
+  /// Le statut ne se modifie jamais directement : [action] vaut
+  /// `soumettre` (étudiant), `autoriser`, `refuser` ou `rouvrir`
+  /// (responsable des stages). [motif] est obligatoire pour refuser ou
+  /// rouvrir. Une étape sautée est refusée par le serveur (409).
+  Future<Map<String, dynamic>> transition(
+    int folderId,
+    String action, {
+    String? motif,
+  }) async {
+    final data = await api.post('internship-folders/$folderId/$action/', {
+      if (motif != null) 'motif': motif,
+    });
+    return ApiService.requireObject(data);
+  }
+
+  /// Historique des transitions du dossier (preuves conservées).
+  Future<List<Map<String, dynamic>>> historique(int folderId) {
+    return api.getList('internship-folders/$folderId/historique/');
+  }
+
+  /// Niveau de confidentialité du rapport du dossier.
+  Future<Map<String, dynamic>> confidentialite(int folderId) {
+    return api.getObject('internship-folders/$folderId/confidentialite/');
+  }
+
+  /// Modifie la confidentialité (personnel) : [niveau] `standard` ou
+  /// `confidentiel`, [origine] de la restriction, fin d'[embargo]. La fin
+  /// d'un embargo ne rend jamais le rapport public automatiquement.
+  Future<Map<String, dynamic>> definirConfidentialite(
+    int folderId, {
+    required String niveau,
+    String origine = '',
+    String? embargo,
+  }) async {
+    final data = await api.put('internship-folders/$folderId/confidentialite/', {
+      'niveau': niveau,
+      'origine': origine,
+      'embargo_jusqu_au': embargo,
+      'diffusion_autorisee': false,
+    });
+    return ApiService.requireObject(data);
   }
 
   /// Liste les versions de documents du dossier [folderId].

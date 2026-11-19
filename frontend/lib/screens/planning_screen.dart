@@ -5,6 +5,7 @@ library;
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
+import '../core/network/api_service.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/dates.dart';
 import '../models/defense.dart';
@@ -132,6 +133,68 @@ class _PlanningScreenState extends State<PlanningScreen> {
     if (created == true) await _charger();
   }
 
+  /// Publie les soutenances confirmées dans une nouvelle version du
+  /// planning (F05). Le serveur revérifie toutes les règles dans une seule
+  /// transaction : au moindre problème, rien n'est publié et la liste des
+  /// soutenances à corriger est affichée.
+  Future<void> _publier() async {
+    final aPublier = PlanningStore.defenses.value
+        .where((d) => d.status == 'confirme' || d.status == 'reporte')
+        .length;
+    final commentaire = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Publier le planning'),
+        content: SizedBox(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                aPublier == 0
+                    ? 'Aucune soutenance confirmée n’attend de publication.'
+                    : '$aPublier soutenance(s) confirmée(s) seront publiées dans une '
+                          'nouvelle version figée du planning ; les convocations '
+                          'seront produites pour l’étudiant et chaque membre du jury.',
+                style: const TextStyle(fontSize: 13, height: 1.45),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: commentaire,
+                decoration: const InputDecoration(labelText: 'Commentaire (facultatif)'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Retour')),
+          SgButton(
+            'Publier',
+            icon: Icons.campaign_rounded,
+            onPressed: aPublier == 0 ? null : () => Navigator.pop(ctx, true),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    // Une clé par action : relancer après une coupure ne publie pas deux fois.
+    final cle = ApiService.nouvelleCleIdempotence();
+    try {
+      final version = await _service.publier(commentaire: commentaire.text.trim(), cle: cle);
+      if (!mounted) return;
+      SgToast.show(
+        context,
+        'Planning publié : version ${version['numero']} '
+        '(${version['nombre_soutenances']} soutenance(s)).',
+      );
+      await _charger();
+    } on ApiException catch (e) {
+      if (mounted) SgToast.show(context, e.message, tone: SgTone.danger);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return SgPage(
@@ -148,12 +211,19 @@ class _PlanningScreenState extends State<PlanningScreen> {
           variant: SgBtnVariant.outline,
           onPressed: _charger,
         ),
-        if (_peutGerer)
+        if (_peutGerer) ...[
+          SgButton(
+            'Publier le planning',
+            icon: Icons.campaign_rounded,
+            variant: SgBtnVariant.dark,
+            onPressed: _publier,
+          ),
           SgButton(
             'Nouvelle soutenance',
             icon: Icons.add_rounded,
             onPressed: _nouvelle,
           ),
+        ],
       ],
       // Observation des trois états partagés du planning.
       child: ValueListenableBuilder<bool>(

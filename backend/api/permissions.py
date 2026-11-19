@@ -80,3 +80,16 @@ class IsAccountAdministrator(permissions.BasePermission):
     def has_permission(self, request, view):
         """Retourne True uniquement pour le rôle administrateur."""
         return get_user_role(request.user) == 'admin'
+
+
+class IsPersonnelOrJury(permissions.BasePermission):
+    """
+    Personnel (admin, responsable) ou membre du jury.
+
+    Le périmètre fin (soutenances de SON jury, président pour l'approbation)
+    est vérifié par la vue et par api/services/notes.py.
+    """
+
+    def has_permission(self, request, view):
+        """Retourne True pour le personnel et les membres du jury."""
+        return get_user_role(request.user) in ROLES_PERSONNEL + ('jury',)

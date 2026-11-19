@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Icône adaptative SGSUS (Android 8 et plus, dont Samsung One UI) :
+     fond noir uni + monogramme « SG » doré au premier plan. Le lanceur
+     découpe lui-même la forme (cercle, carré arrondi…). La couche
+     « monochrome » sert aux icônes thématiques d'Android 13 et plus. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/sgsus_noir" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

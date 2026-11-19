@@ -1,38 +1,60 @@
+# =============================================================================
+# Intégration et livraison continues de SGSUS (chapitres 15 à 18 du dossier).
+#
+# * frontend : analyse et tests Flutter (version épinglée, comme sur Render) ;
+# * backend  : contrat commun scripts/ci.sh (ruff, check --deploy, migrations,
+#              tests PostgreSQL + rapport JUnit et couverture, statiques) et
+#              contrôle des droits du rôle applicatif PostgreSQL ;
+# * package  : (main uniquement) image Docker identifiée par le SHA du commit,
+#              archive + empreinte SHA-256 conservées comme artefact ;
+# * deploy   : (main, si l'environnement « render » est configuré) déploie
+#              CE commit sur Render et le vérifie (scripts/deploy.sh).
+#
+# Les actions sont épinglées par SHA de commit (version indiquée en commentaire).
+# Une pull request ne reçoit jamais les secrets de déploiement.
+# =============================================================================
 name: CI - Gestion des stages et soutenances
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Une nouvelle poussée sur la même branche annule la vérification précédente.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   frontend:
     name: Vérification Flutter
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - name: Récupérer le code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Installer Flutter
-        uses: subosito/flutter-action@v2
+      - name: Installer Flutter (même version que le poste et Render)
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: "3.50.0"
+          flutter-version: "3.47.6"
           cache: true
 
-      - name: Analyser et tester Flutter
+      - name: Dépendances, analyse et tests
         run: |
-          cd frontend
           flutter pub get
           flutter analyze
-          flutter test
+          flutter test --reporter expanded
 
-  verification:
-    name: Vérification Django, tests et Docker
+  backend:
+    name: Contrat de construction du backend
     runs-on: ubuntu-latest
 
     services:
@@ -40,7 +62,7 @@ jobs:
         image: postgres:17
         env:
           POSTGRES_DB: gestion_stage_soutenance
-          # Ce compte privilégié ne sert qu'à créer la base de test éphémère en CI.
+          # Compte privilégié éphémère : il ne sert qu'à créer la base de test.
           POSTGRES_USER: gestion_user
           POSTGRES_PASSWORD: ci-test-admin-password-not-for-production
         ports:
@@ -51,16 +73,24 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
-    defaults:
-      run:
-        working-directory: backend
+    env:
+      DJANGO_SECRET_KEY: ci-only-jwt-signing-key-not-for-production
+      DJANGO_DEBUG: "True"
+      POSTGRES_DB: gestion_stage_soutenance
+      POSTGRES_USER: gestion_user
+      POSTGRES_PASSWORD: ci-test-admin-password-not-for-production
+      DB_USER: gestion_user
+      DB_PASSWORD: ci-test-admin-password-not-for-production
+      DB_ADMIN_USER: gestion_user
+      DB_HOST: localhost
+      DB_PORT: "5432"
 
     steps:
       - name: Récupérer le code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Installer Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.13"
           cache: pip
@@ -68,59 +98,26 @@ jobs:
             backend/requirements.txt
             backend/requirements-dev.txt
 
-      # requirements-dev.txt inclut requirements.txt ET les outils de test
-      # (pytest…) importés par certains fichiers de tests.
-      - name: Installer les dépendances
-        run: pip install -r requirements-dev.txt
+      - name: Installer les dépendances verrouillées
+        run: pip install -r backend/requirements-dev.txt
 
-      - name: Vérifier la configuration Django
+      - name: Contrat de construction (scripts/ci.sh)
         env:
-          DJANGO_SECRET_KEY: ci-only-jwt-signing-key-not-for-production
-          DJANGO_DEBUG: "True"
-          POSTGRES_DB: gestion_stage_soutenance
-          POSTGRES_USER: gestion_user
-          POSTGRES_PASSWORD: ci-test-admin-password-not-for-production
-          DB_USER: gestion_user
-          DB_PASSWORD: ci-test-admin-password-not-for-production
-          DB_ADMIN_USER: gestion_user
-          DB_HOST: localhost
-          DB_PORT: "5432"
-        run: python manage.py check
+          SGSUS_SANS_INSTALLATION: "1"
+        run: bash scripts/ci.sh
 
-      - name: Exécuter les tests backend
-        env:
-          DJANGO_SECRET_KEY: ci-only-jwt-signing-key-not-for-production
-          DJANGO_DEBUG: "True"
-          POSTGRES_DB: gestion_stage_soutenance
-          POSTGRES_USER: gestion_user
-          POSTGRES_PASSWORD: ci-test-admin-password-not-for-production
-          DB_USER: gestion_user
-          DB_PASSWORD: ci-test-admin-password-not-for-production
-          DB_ADMIN_USER: gestion_user
-          DB_HOST: localhost
-          DB_PORT: "5432"
-        run: python manage.py test
+      - name: Conserver le rapport de tests
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rapport-tests
+          path: backend/report.xml
+          retention-days: 30
 
-      - name: Vérifier les migrations
+      - name: Vérifier l'isolation du rôle applicatif
+        # Le rôle utilisé par Django en production ne doit être ni super-
+        # utilisateur, ni créateur de bases ou de rôles (moindre privilège).
         env:
-          DJANGO_SECRET_KEY: ci-only-jwt-signing-key-not-for-production
-          DJANGO_DEBUG: "True"
-          POSTGRES_DB: gestion_stage_soutenance
-          POSTGRES_USER: gestion_user
-          POSTGRES_PASSWORD: ci-test-admin-password-not-for-production
-          DB_USER: gestion_user
-          DB_PASSWORD: ci-test-admin-password-not-for-production
-          DB_ADMIN_USER: gestion_user
-          DB_HOST: localhost
-          DB_PORT: "5432"
-        run: python manage.py makemigrations --check --dry-run
-
-      - name: Vérifier l’isolation du rôle applicatif
-        # Le compte admin CI est éphémère ; Django en production n’y accède jamais.
-        env:
-          POSTGRES_DB: gestion_stage_soutenance
-          POSTGRES_USER: gestion_user
-          POSTGRES_PASSWORD: ci-test-admin-password-not-for-production
           DB_USER: sgsus_app_user
           DB_PASSWORD: ci-test-app-password-not-for-production
         run: |
@@ -129,7 +126,7 @@ jobs:
             --set=ON_ERROR_STOP=1 --command \
             "CREATE TABLE public.role_init_fixture (id serial PRIMARY KEY)"
           psql --host localhost --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-            --set=ON_ERROR_STOP=1 --file ../database/provision-app-role.sql
+            --set=ON_ERROR_STOP=1 --file database/provision-app-role.sql
           export PGPASSWORD="$DB_PASSWORD"
           attributes="$(psql --host localhost --username "$DB_USER" --dbname "$POSTGRES_DB" \
             --no-align --tuples-only --command \
@@ -143,7 +140,53 @@ jobs:
             "SELECT nextval('public.role_init_fixture_id_seq')")"
           test "$sequence_value" = "1"
 
-      - name: Construire l'image Docker
+  package:
+    name: Image identifiée par le commit
+    if: github.event_name == 'push'
+    needs: [frontend, backend]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Construire, archiver et calculer l'empreinte
         # Le contexte racine fournit aussi database/schema.sql au Dockerfile.
-        working-directory: .
-        run: docker build -t gestion-stage-soutenance:ci -f backend/Dockerfile .
+        run: |
+          docker build -t "sgsus-api:${GITHUB_SHA}" -f backend/Dockerfile .
+          docker save "sgsus-api:${GITHUB_SHA}" | gzip > image.tar.gz
+          sha256sum image.tar.gz > image.tar.gz.sha256
+          cat image.tar.gz.sha256
+
+      - name: Conserver l'image et son empreinte
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-${{ github.sha }}
+          path: |
+            image.tar.gz
+            image.tar.gz.sha256
+          retention-days: 30
+
+  deploy:
+    name: Déploiement vérifié sur Render
+    # Seulement sur main, et seulement si le déploiement est configuré :
+    # variables de DÉPÔT RENDER_SERVICE_ID et URL_API (une variable
+    # d'environnement serait invisible dans ce `if`, évalué avant l'entrée
+    # dans l'environnement) et secret RENDER_API_KEY dans l'environnement
+    # « render ». Voir l'ADR 0003 et le guide d'exploitation (section 6).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.RENDER_SERVICE_ID != ''
+    needs: package
+    runs-on: ubuntu-latest
+    environment: render
+    concurrency:
+      group: deploy-render
+      cancel-in-progress: false
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Déployer et vérifier le commit testé
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ vars.RENDER_SERVICE_ID }}
+          URL_API: ${{ vars.URL_API }}
+        run: bash scripts/deploy.sh "${GITHUB_SHA}"

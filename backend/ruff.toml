@@ -1,0 +1,17 @@
+# Configuration de ruff (analyse statique du code Python, chapitre 15).
+# Lancement : ruff check .   (aussi exécuté par scripts/ci.sh et la CI).
+line-length = 120
+target-version = "py313"
+extend-exclude = ["api/migrations"]
+
+[lint]
+# E/W : style PEP 8 ; F : erreurs (imports inutilisés, noms indéfinis…) ;
+# I : ordre des imports ; B : pièges courants ; DJ : bonnes pratiques Django.
+select = ["E", "W", "F", "I", "B", "DJ"]
+ignore = [
+    "B904",   # « raise … from » : déjà appliqué là où l'origine compte
+    "DJ001",  # champs texte « null=True » hérités du schéma SQL historique
+]
+
+[lint.isort]
+known-first-party = ["api", "config", "tests"]

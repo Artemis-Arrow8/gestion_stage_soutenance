@@ -38,8 +38,13 @@ class Defense {
   /// Nom du jury (ou liste de membres séparés par des virgules).
   final String juryName;
 
-  /// Statut (planifie, confirme, annule…).
+  /// Statut : planifie (proposée), confirme, publie, reporte, termine
+  /// (tenue) ou annule. Il ne change que par les actions du planning.
   final String status;
+
+  /// Numéro de la version du planning qui a publié la soutenance (ou null
+  /// si elle n'est pas encore publiée).
+  final int? versionPubliee;
 
   /// Crée une soutenance.
   Defense({
@@ -54,6 +59,7 @@ class Defense {
     required this.roomName,
     required this.juryName,
     required this.status,
+    this.versionPubliee,
   });
 
   /// Construit une soutenance depuis le JSON de `/api/soutenances/`.
@@ -87,8 +93,13 @@ class Defense {
           (juryDetail is Map ? juryDetail['name']?.toString() : null) ??
           '',
       status: json['status']?.toString() ?? '',
+      versionPubliee: int.tryParse(json['version_publiee']?.toString() ?? ''),
     );
   }
+
+  /// Vrai si la soutenance est publiée (participants convoqués) : elle ne
+  /// se modifie plus directement, seulement par un report.
+  bool get estPubliee => status == 'publie';
 
   /// Copie la soutenance en remplaçant les champs fournis.
   ///
@@ -115,6 +126,7 @@ class Defense {
       roomName: roomName ?? this.roomName,
       juryName: juryName ?? this.juryName,
       status: status ?? this.status,
+      versionPubliee: versionPubliee,
     );
   }
 

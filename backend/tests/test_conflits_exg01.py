@@ -4,17 +4,23 @@ Tests d'intégration PostgreSQL de la règle EXG01 et de F03 (recevabilité).
 Couvre STA01, STA02, STA05 (niveau planification) et vérifie qu'un refus
 n'écrit RIEN (pas de réservation partielle). Ces tests utilisent les vraies
 contraintes d'exclusion de database/schema.sql.
+
+Convention : une règle métier violée lève ConflitMetier (HTTP 409), une
+donnée invalide (salle inconnue, date mal formée) lève ValidationError (400).
 """
 
 import pytest
 from django.db import IntegrityError, transaction
 from rest_framework.exceptions import ValidationError
 
+from api.exceptions import ConflitMetier
 from api.models import Defense
-from api.services import conflicts
+from api.services import conflicts, dossiers
 
 from .factories import (
+    affecter_encadreur,
     creer_avis,
+    creer_compte,
     creer_defense,
     creer_dossier,
     creer_jury,
@@ -55,9 +61,10 @@ def test_planification_valide_enregistre_la_soutenance():
 def test_sta01_meme_jury_chevauchement_refuse_sans_ecriture():
     jury = creer_jury()
     creer_defense(creer_dossier(), jury, "Salle 101", creneau(9, 0, 10, 0))
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(ConflitMetier) as exc:
         _planifier(creer_dossier(), jury, "Salle 102", t(9, 30), t(10, 30))
-    assert "jury" in exc.value.detail
+    assert exc.value.details["champ"] == "jury"
+    assert exc.value.regle == "EXG01"
     assert "EXG01" in _texte(exc)
     assert Defense.objects.count() == 1  # aucune réservation partielle
 
@@ -66,9 +73,9 @@ def test_sta01_meme_salle_chevauchement_refuse_avec_conflit_identifie():
     existante = creer_defense(
         creer_dossier(), creer_jury(), "Salle 101", creneau(9, 0, 10, 0)
     )
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(ConflitMetier) as exc:
         _planifier(creer_dossier(), creer_jury(), "Salle 101", t(9, 30), t(10, 30))
-    assert "room_name" in exc.value.detail
+    assert exc.value.details["champ"] == "room_name"
     assert f"#{existante.pk}" in _texte(exc)  # le conflit est identifié
     assert Defense.objects.count() == 1
 
@@ -76,8 +83,21 @@ def test_sta01_meme_salle_chevauchement_refuse_avec_conflit_identifie():
 def test_creneau_inclus_dans_un_autre_refuse():
     jury = creer_jury()
     creer_defense(creer_dossier(), jury, "Salle 101", creneau(9, 0, 12, 0))
-    with pytest.raises(ValidationError):
+    with pytest.raises(ConflitMetier):
         _planifier(creer_dossier(), creer_jury(), "Salle 101", t(10), t(11))
+
+
+def test_soutenance_existante_incluse_dans_le_nouveau_creneau_refusee():
+    """Cas « englobant inverse » : le nouveau créneau contient l'ancien."""
+    creer_defense(creer_dossier(), creer_jury(), "Salle 101", creneau(10, 0, 10, 30))
+    with pytest.raises(ConflitMetier):
+        _planifier(creer_dossier(), creer_jury(), "Salle 101", t(9), t(12))
+
+
+def test_autre_salle_et_autre_jury_meme_horaire_acceptes():
+    creer_defense(creer_dossier(), creer_jury(), "Salle 101", creneau(9, 0, 10, 0))
+    _planifier(creer_dossier(), creer_jury(), "Salle 102", t(9), t(10))
+    assert Defense.objects.count() == 2
 
 
 def test_membre_commun_a_deux_jurys_refuse():
@@ -85,7 +105,7 @@ def test_membre_commun_a_deux_jurys_refuse():
     jury_a = creer_jury(noms=("Dr Traoré", "Dr Keita", "Dr Coulibaly"))
     jury_b = creer_jury(noms=("Dr Traoré", "Dr Diallo", "Dr Sidibé"))
     creer_defense(creer_dossier(), jury_a, "Salle 101", creneau(9, 0, 10, 0))
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(ConflitMetier) as exc:
         _planifier(creer_dossier(), jury_b, "Salle 102", t(9, 30), t(10, 30))
     assert "Dr Traoré" in _texte(exc)
     assert Defense.objects.count() == 1
@@ -110,12 +130,26 @@ def test_sta02_creneaux_jointifs_acceptes_avec_marge_zero():
     assert Defense.objects.count() == 2
 
 
-@pytest.mark.skip(
-    reason="Marge de déplacement non implémentée dans conflicts.py : "
-    "STA02 exige le refus des créneaux jointifs si une marge est configurée."
-)
-def test_sta02_creneaux_jointifs_refuses_si_marge_configuree():
-    ...
+def test_sta02_creneaux_jointifs_refuses_si_marge_configuree(settings):
+    """Avec 15 min de marge de déplacement, 10 h-11 h suit de trop près 9 h-10 h."""
+    settings.SGSUS_MARGE_MINUTES = 15
+    jury = creer_jury()
+    _planifier(creer_dossier(), jury, "Salle 101", t(9), t(10))
+    with pytest.raises(ConflitMetier) as exc:
+        _planifier(creer_dossier(), jury, "Salle 101", t(10), t(11))
+    assert exc.value.regle == "EXG01"
+    assert Defense.objects.count() == 1
+    # Au-delà de la marge, le créneau est accepté.
+    _planifier(creer_dossier(), jury, "Salle 101", t(10, 15), t(11, 15))
+    assert Defense.objects.count() == 2
+
+
+def test_soutenance_annulee_libere_salle_et_jury():
+    """Une réservation annulée n'est plus active : le créneau redevient libre."""
+    jury = creer_jury()
+    creer_defense(creer_dossier(), jury, "Salle 101", creneau(9, 0, 10, 0), statut="annule")
+    _planifier(creer_dossier(), jury, "Salle 101", t(9), t(10))
+    assert Defense.objects.exclude(status="annule").count() == 1
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +172,7 @@ def test_modification_vers_un_creneau_occupe_refusee_et_inchangee():
     creer_defense(creer_dossier(), jury_a, "Salle 101", creneau(9, 0, 10, 0))
     dossier_b = creer_dossier()
     defense_b = _planifier(dossier_b, jury_b, "Salle 101", t(11), t(12))
-    with pytest.raises(ValidationError):
+    with pytest.raises(ConflitMetier):
         _planifier(
             dossier_b, jury_b, "Salle 101", t(9, 30), t(10, 30),
             defense_id=defense_b.pk,
@@ -151,9 +185,10 @@ def test_modification_vers_un_creneau_occupe_refusee_et_inchangee():
 # ---------------------------------------------------------------------------
 
 def test_dossier_brouillon_sans_avis_refuse():
-    with pytest.raises(ValidationError) as exc:
+    with pytest.raises(ConflitMetier) as exc:
         _planifier(creer_dossier("brouillon"), creer_jury(), "Salle 101", t(9), t(10))
-    assert "folder" in exc.value.detail
+    assert exc.value.details["champ"] == "folder"
+    assert exc.value.regle == "F03"
     assert Defense.objects.count() == 0
 
 
@@ -163,36 +198,71 @@ def test_dossier_inexistant_refuse():
     assert "n'existe pas" in _texte(exc)
 
 
-def test_avis_favorable_encadreur_rend_le_dossier_planifiable():
+def test_avis_favorable_seul_ne_suffit_pas_il_faut_l_autorisation():
+    """
+    F03 : l'avis favorable fait passer le dossier à « valide » ; seule
+    l'autorisation du responsable le rend « recevable », donc planifiable.
+    """
     dossier = creer_dossier("soumis")
-    creer_avis(dossier, "favorable", "encadreur", version=1)
+    encadreur = affecter_encadreur(dossier)
+    version = creer_version(dossier, numero=1)
+    dossiers.enregistrer_avis_pedagogique(version.pk, encadreur, "favorable")
+    dossier.refresh_from_db()
+    assert dossier.status == "valide"
+    with pytest.raises(ConflitMetier):
+        _planifier(dossier, creer_jury(), "Salle 101", t(9), t(10))
+    dossiers.autoriser_soutenance(dossier.pk, creer_compte("responsible"))
     _planifier(dossier, creer_jury(), "Salle 101", t(9), t(10))
     assert Defense.objects.count() == 1
 
 
-def test_avis_defavorable_refuse():
+def test_avis_defavorable_demande_une_correction():
     dossier = creer_dossier("soumis")
-    creer_avis(dossier, "defavorable", "encadreur")
-    with pytest.raises(ValidationError):
+    encadreur = affecter_encadreur(dossier)
+    version = creer_version(dossier, numero=1)
+    dossiers.enregistrer_avis_pedagogique(version.pk, encadreur, "defavorable", "Bibliographie absente")
+    dossier.refresh_from_db()
+    assert dossier.status == "a_corriger"
+    with pytest.raises(ConflitMetier):
         _planifier(dossier, creer_jury(), "Salle 101", t(9), t(10))
 
 
-def test_avis_du_tuteur_seul_ne_suffit_pas():
-    dossier = creer_dossier("soumis")
+def test_sta11_avis_du_tuteur_seul_ne_permet_pas_l_autorisation():
+    """STA11 : sans l'avis obligatoire de l'encadreur, l'autorisation est refusée."""
+    dossier = creer_dossier("valide")
     creer_avis(dossier, "favorable", "tuteur")
-    with pytest.raises(ValidationError):
-        _planifier(dossier, creer_jury(), "Salle 101", t(9), t(10))
+    with pytest.raises(ConflitMetier) as exc:
+        dossiers.autoriser_soutenance(dossier.pk, creer_compte("responsible"))
+    assert exc.value.regle == "F03"
+    dossier.refresh_from_db()
+    assert dossier.status == "valide"  # état et décisions inchangés
 
 
 def test_sta05_avis_sur_v1_ne_couvre_pas_une_v2():
-    """Une nouvelle version du rapport impose un nouvel avis."""
+    """Une nouvelle version du rapport impose un nouvel avis et une nouvelle autorisation."""
     dossier = creer_dossier("soumis")
-    creer_avis(dossier, "favorable", "encadreur", version=1)
-    creer_version(dossier, numero=2)
-    with pytest.raises(ValidationError):
+    encadreur = affecter_encadreur(dossier)
+    responsable = creer_compte("responsible")
+    v1 = creer_version(dossier, numero=1)
+    avis_v1 = dossiers.enregistrer_avis_pedagogique(v1.pk, encadreur, "favorable")
+    dossiers.autoriser_soutenance(dossier.pk, responsable)
+    # Dépôt de la V2 : le dossier repasse à « soumis », l'avis reste sur V1.
+    v2 = creer_version(dossier, numero=2)
+    dossier.refresh_from_db()  # comme le dépôt, qui relit le dossier verrouillé
+    dossiers.apres_nouvelle_version(dossier, v2, None)
+    dossier.refresh_from_db()
+    assert dossier.status == "soumis"
+    avis_v1.refresh_from_db()
+    assert avis_v1.document_version_id == v1.pk
+    with pytest.raises(ConflitMetier):
         _planifier(dossier, creer_jury(), "Salle 101", t(9), t(10))
     assert Defense.objects.count() == 0
-    creer_avis(dossier, "favorable", "encadreur", version=2)
+    # Un avis sur l'ANCIENNE version est refusé : il doit porter sur la V2.
+    with pytest.raises(ConflitMetier) as exc:
+        dossiers.enregistrer_avis_pedagogique(v1.pk, encadreur, "favorable")
+    assert exc.value.regle == "STA05"
+    dossiers.enregistrer_avis_pedagogique(v2.pk, encadreur, "favorable")
+    dossiers.autoriser_soutenance(dossier.pk, responsable)
     _planifier(dossier, creer_jury(), "Salle 101", t(9), t(10))
     assert Defense.objects.count() == 1
 

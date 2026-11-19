@@ -9,7 +9,11 @@
 # collecte les fichiers statiques puis lance Gunicorn sur $PORT.
 # =============================================================================
 
-FROM python:3.13-slim
+# Image de base verrouillée par son empreinte (digest) validée le 19/11/2026 :
+# la même image est reconstruite à chaque fois (chapitre 15). Pour une mise
+# à jour de sécurité : `docker pull python:3.13-slim`, relever le nouveau
+# digest, le remplacer ici, puis faire passer la CI.
+FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
 
 # PYTHONDONTWRITEBYTECODE : pas de fichiers .pyc dans l'image.
 # PYTHONUNBUFFERED : journaux Python affichés immédiatement (Render/Docker).

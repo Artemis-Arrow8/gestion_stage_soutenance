@@ -240,9 +240,11 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
         const SizedBox(height: 18),
         // Rappel discret du serveur visé : utile pour vérifier qu'une
-        // compilation pointe vers la bonne API (--dart-define).
+        // compilation pointe vers la bonne API (--dart-define). L'adresse
+        // effective est utilisée (hôte et port) : pour la version PC, dont
+        // l'adresse est relative (« /api »), on voit « localhost:8080 ».
         Text(
-          'Serveur : ${Uri.tryParse(AppConfig.apiBaseUrl)?.host ?? AppConfig.apiBaseUrl}',
+          'Serveur : ${Uri.tryParse(auth.api.baseUrl)?.authority ?? auth.api.baseUrl}',
           textAlign: TextAlign.center,
           style: const TextStyle(fontSize: 11.5, color: AppColors.greyLight),
         ),

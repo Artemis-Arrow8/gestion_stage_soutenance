@@ -177,6 +177,97 @@ void main() {
     },
   );
 
+  testWidgets(
+    'sur téléphone : barre du bas, carte vers un module, retour sans quitter',
+    (WidgetTester tester) async {
+      // Écran de téléphone (390 × 844, format Samsung/iPhone courant).
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final provider = _createProvider(role: 'admin');
+      await provider.login('administrateur', 'secret');
+      await tester.pumpWidget(SgsusApp(authProvider: provider));
+      await tester.pumpAndSettle();
+
+      // Navigation à portée du pouce : barre en bas avec « Accueil » et
+      // « Menu » (les autres modules sont regroupés dans le menu).
+      expect(find.byType(NavigationBar), findsOneWidget);
+      expect(find.text('Accueil'), findsOneWidget);
+      expect(find.text('Menu'), findsOneWidget);
+
+      // Le menu du bas affiche tous les modules sous forme de cartes.
+      await tester.tap(find.text('Menu'));
+      await tester.pumpAndSettle();
+      expect(find.text('Tous les modules'), findsOneWidget);
+      Navigator.of(tester.element(find.text('Tous les modules'))).pop();
+      await tester.pumpAndSettle();
+
+      // Toucher une carte de l'accueil ouvre le module correspondant.
+      await tester.ensureVisible(find.text('Gestion des campagnes'));
+      await tester.tap(find.text('Gestion des campagnes'));
+      await tester.pumpAndSettle();
+      expect(find.text('Campagnes de stage'), findsOneWidget);
+      // Flèche « Retour » visible sur l'écran ouvert : elle ramène aussi
+      // à l'accueil.
+      await tester.tap(find.byTooltip('Retour'));
+      await tester.pumpAndSettle();
+      expect(find.text('Campagnes de stage'), findsNothing);
+      // Pas de flèche sur l'accueil (rien en dessous).
+      expect(find.byTooltip('Retour'), findsNothing);
+
+      // Geste « retour » (glissement depuis le bord) : même résultat.
+      await tester.ensureVisible(find.text('Gestion des campagnes'));
+      await tester.tap(find.text('Gestion des campagnes'));
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byType(DashboardScreen), findsOneWidget);
+      expect(find.text('Campagnes de stage'), findsNothing);
+
+      // Sur l'accueil, un seul « retour » ne ferme pas l'application :
+      // un message demande de confirmer par un second geste.
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(
+        find.text('Refaites le geste « retour » pour quitter SGSUS.'),
+        findsOneWidget,
+      );
+      expect(find.byType(DashboardScreen), findsOneWidget);
+      // Laisse expirer le message avant la fin du test.
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+    },
+  );
+
+  // Chaque profil s'affiche sans débordement sur un petit téléphone
+  // (360 px de large, la largeur des Samsung Galaxy les plus courants).
+  for (final role in [
+    'admin',
+    'responsible',
+    'jury',
+    'supervisor',
+    'student',
+  ]) {
+    testWidgets('accueil « $role » lisible sur un téléphone de 360 px', (
+      WidgetTester tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(360, 740));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final provider = _createProvider(role: role);
+      await provider.login('compte', 'secret');
+      await tester.pumpWidget(SgsusApp(authProvider: provider));
+      await tester.pumpAndSettle();
+
+      // Barre du bas présente ; tout débordement ferait échouer le test.
+      expect(find.byType(NavigationBar), findsOneWidget);
+      expect(find.text('Vos espaces'), findsOneWidget);
+      // Toutes les cartes restent atteignables en faisant défiler.
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, -2000));
+      await tester.pumpAndSettle();
+    });
+  }
+
   test('restaure la session et renouvelle un jeton expiré', () async {
     _storageValues.addAll({
       'sgsus_access_token': 'access-expiré',

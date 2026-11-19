@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Couleurs de la charte SGSUS utilisées par Android avant le démarrage
+     de Flutter (icône, écran de démarrage). -->
+<resources>
+    <!-- Noir profond de la charte (AppColors.ink côté Flutter). -->
+    <color name="sgsus_noir">#FF0B0B0C</color>
+</resources>

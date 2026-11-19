@@ -1,0 +1,16 @@
+@startuml etats_dossier
+[*] --> brouillon : création (étudiant)
+brouillon --> soumis : soumettre [≥ 1 version]
+a_corriger --> soumis : soumettre [nouvelle version]
+soumis --> valide : avis favorable (encadreur)
+soumis --> a_corriger : avis défavorable (encadreur)
+valide --> recevable : autoriser la soutenance (responsable)
+soumis --> rejete : refuser [motif]
+a_corriger --> rejete : refuser [motif]
+valide --> rejete : refuser [motif]
+rejete --> soumis : rouvrir [motif]
+recevable --> soumis : rouvrir [motif, aucune soutenance active]
+valide --> soumis : nouvelle version déposée
+recevable --> soumis : nouvelle version déposée
+recevable : planifiable (F03)
+@enduml

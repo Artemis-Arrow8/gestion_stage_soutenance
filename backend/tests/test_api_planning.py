@@ -57,7 +57,7 @@ def test_creation_valide_renvoie_201(client):
     assert Defense.objects.count() == 1
 
 
-def test_creation_en_conflit_renvoie_400_sans_ecriture(client):
+def test_creation_en_conflit_renvoie_409_sans_ecriture(client):
     creer_defense(creer_dossier(), creer_jury(), "Salle 101", creneau(9, 0, 10, 0))
     reponse = client.post(
         reverse("soutenance-list"),
@@ -65,8 +65,11 @@ def test_creation_en_conflit_renvoie_400_sans_ecriture(client):
                  debut="2026-07-10T09:30:00Z", fin="2026-07-10T10:30:00Z"),
         format="json",
     )
-    assert reponse.status_code == 400
-    assert "EXG01" in str(reponse.json())
+    # Conflit métier : 409 + enveloppe {code, regle, message, request_id}.
+    assert reponse.status_code == 409
+    corps = reponse.json()
+    assert corps["code"] == "BUSINESS_CONFLICT" and corps["regle"] == "EXG01"
+    assert corps["request_id"] == reponse["X-Request-ID"]
     assert Defense.objects.count() == 1
 
 
@@ -82,13 +85,14 @@ def test_creation_creneaux_jointifs_acceptee(client):
     assert reponse.status_code == 201, reponse.content
 
 
-def test_creation_dossier_non_recevable_renvoie_400(client):
+def test_creation_dossier_non_recevable_renvoie_409(client):
     reponse = client.post(
         reverse("soutenance-list"),
         _payload(creer_dossier("brouillon"), creer_jury()),
         format="json",
     )
-    assert reponse.status_code == 400
+    assert reponse.status_code == 409
+    assert reponse.json()["regle"] == "F03"
     assert Defense.objects.count() == 0
 
 

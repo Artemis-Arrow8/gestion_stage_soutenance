@@ -2,6 +2,7 @@
 /// aiguillage entre l'écran de connexion et l'espace connecté.
 library;
 
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
@@ -28,7 +29,9 @@ class SgsusApp extends StatelessWidget {
       providers: [
         // Session globale ; restaurée dès le lancement.
         if (provided == null)
-          ChangeNotifierProvider(create: (_) => AuthProvider()..restoreSession())
+          ChangeNotifierProvider(
+            create: (_) => AuthProvider()..restoreSession(),
+          )
         else
           ChangeNotifierProvider.value(value: provided),
       ],
@@ -73,11 +76,76 @@ class AuthGate extends StatelessWidget {
     }
     // La clé force la reconstruction complète lors d'un changement de
     // session (aucun état d'écran ne survit à une déconnexion).
-    return AnimatedSwitcher(
+    final ecran = AnimatedSwitcher(
       duration: const Duration(milliseconds: 250),
       child: auth.isAuthenticated
           ? const DashboardScreen(key: ValueKey('espace-connecte'))
           : const LoginScreen(key: ValueKey('connexion')),
+    );
+    // Sur l'accueil connecté, le geste « retour » ne quitte pas l'application
+    // au premier essai (usage à une main : on glisse souvent par erreur).
+    return auth.isAuthenticated ? _GardeSortie(child: ecran) : ecran;
+  }
+}
+
+/// Protège l'accueil contre une sortie involontaire de l'application.
+///
+/// Premier geste « retour » : un message invite à recommencer ; un second
+/// geste dans les 2 secondes quitte l'application. Les autres écrans,
+/// empilés au-dessus, se ferment normalement d'un seul geste.
+class _GardeSortie extends StatefulWidget {
+  const _GardeSortie({required this.child});
+
+  /// Écran protégé (le tableau de bord).
+  final Widget child;
+
+  @override
+  State<_GardeSortie> createState() => _GardeSortieState();
+}
+
+/// État de la garde : heure du dernier geste « retour ».
+class _GardeSortieState extends State<_GardeSortie> {
+  /// Moment du dernier geste « retour » sur l'accueil.
+  DateTime? _dernierRetour;
+
+  /// Délai pendant lequel un second geste confirme la sortie.
+  static const _delai = Duration(seconds: 2);
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        final maintenant = DateTime.now();
+        if (_dernierRetour != null &&
+            maintenant.difference(_dernierRetour!) < _delai) {
+          // Second geste rapproché : sortie confirmée.
+          SystemNavigator.pop();
+          return;
+        }
+        _dernierRetour = maintenant;
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Refaites le geste « retour » pour quitter SGSUS.',
+              ),
+              duration: _delai,
+              // Avec un bouton, le message resterait affiché par défaut :
+              // on force sa disparition après le délai de confirmation.
+              persist: false,
+              // Bouton pour quitter tout de suite, sans refaire le geste.
+              action: SnackBarAction(
+                label: 'Quitter',
+                textColor: AppColors.gold,
+                onPressed: SystemNavigator.pop,
+              ),
+            ),
+          );
+      },
+      child: widget.child,
     );
   }
 }

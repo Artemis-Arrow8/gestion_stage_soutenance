@@ -93,7 +93,8 @@ abstract final class AppColors {
 
 /// Seuils de largeur (en pixels logiques) pour la mise en page adaptative.
 abstract final class AppBreakpoints {
-  /// En dessous : téléphone (une colonne, menu en tiroir).
+  /// En dessous : téléphone (une colonne, barre de navigation en bas de
+  /// l'écran, à portée du pouce pour un usage à une main).
   static const double compact = 600;
 
   /// En dessous : tablette portrait (rail de navigation réduit au-delà).
@@ -148,6 +149,9 @@ abstract final class AppTheme {
   static ThemeData get light {
     final base = ThemeData(
       useMaterial3: true,
+      // Police embarquée dans l'application (voir pubspec.yaml) : même
+      // rendu sur Android, sur le Web et sans connexion Internet.
+      fontFamily: 'Roboto',
       colorScheme: ColorScheme.fromSeed(
         seedColor: AppColors.gold,
         primary: AppColors.ink,
@@ -177,6 +181,19 @@ abstract final class AppTheme {
 
     return base.copyWith(
       scaffoldBackgroundColor: AppColors.bg,
+      // Transitions entre écrans : sur Android (et donc sur un téléphone
+      // Samsung), « retour prédictif » qui suit le geste de glissement
+      // depuis le bord ; ailleurs, un fondu sobre. Sur le Web, le geste
+      // « retour » du navigateur ramène aussi à l'écran précédent.
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: PredictiveBackPageTransitionsBuilder(),
+          TargetPlatform.iOS: FadeForwardsPageTransitionsBuilder(),
+          TargetPlatform.macOS: FadeForwardsPageTransitionsBuilder(),
+          TargetPlatform.windows: FadeForwardsPageTransitionsBuilder(),
+          TargetPlatform.linux: FadeForwardsPageTransitionsBuilder(),
+        },
+      ),
       splashFactory: InkSparkle.splashFactory,
       textTheme: textTheme,
       // Indicateurs de chargement aux couleurs de la marque.

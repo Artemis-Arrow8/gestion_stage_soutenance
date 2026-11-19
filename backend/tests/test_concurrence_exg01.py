@@ -13,6 +13,7 @@ import pytest
 from django.db import connections
 from rest_framework.exceptions import ValidationError
 
+from api.exceptions import ConflitMetier
 from api.models import Defense
 from api.services import conflicts
 
@@ -35,7 +36,8 @@ def _lancer_en_parallele(taches):
             barriere.wait(timeout=15)
             tache()
             issue = ("ok", None)
-        except ValidationError as erreur:
+        except (ConflitMetier, ValidationError) as erreur:
+            # Refus métier (409) ou de validation : la course est perdue proprement.
             issue = ("conflit", str(erreur.detail))
         except Exception as erreur:  # noqa: BLE001 - on veut tout voir
             issue = ("erreur", repr(erreur))

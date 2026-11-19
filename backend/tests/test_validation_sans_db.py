@@ -1,6 +1,7 @@
 """
 Tests SANS base de données : validation des horaires, traduction des
-contraintes PostgreSQL, lecture des paramètres de date.
+contraintes PostgreSQL, lecture des paramètres de date, validation des PDF
+déposés et des champs des sérialiseurs (salles, membres de jury).
 
 Aucun marqueur django_db : pytest-django interdit tout accès à la base dans
 ce fichier, ce qui prouve que ces règles ne dépendent pas de PostgreSQL.
@@ -11,12 +12,17 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pytest
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db.utils import IntegrityError
 from rest_framework.exceptions import ValidationError
 from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
 
 from api import views
+from api.documents.validators import MAX_DOCUMENT_SIZE, validate_pdf_file
+from api.exceptions import ConflitMetier
+from api.serializers import JuryMemberSerializer, SalleSerializer
 from api.services import conflicts
 
 UTC = timezone.utc
@@ -171,8 +177,11 @@ class TestTraductionIntegrityError:
             f'conflicting key value violates exclusion constraint "{contrainte}"'
         )
         traduite = conflicts.traduire_integrity_error(erreur)
-        assert isinstance(traduite, ValidationError)
-        message = str(traduite.detail["detail"])
+        # Conflit métier (HTTP 409) identifiant la règle et la contrainte.
+        assert isinstance(traduite, ConflitMetier)
+        assert traduite.regle == "EXG01"
+        assert traduite.details["contrainte"] == contrainte
+        message = str(traduite.detail)
         assert mot_cle in message and "EXG01" in message
 
     def test_contrainte_inconnue_n_est_pas_presentee_comme_un_conflit(self):
@@ -209,3 +218,73 @@ class TestParametreDate:
     def test_jour_utc_debut_de_journee(self):
         jour = datetime(2026, 7, 10).date()
         assert views._jour_UTC(jour) == datetime(2026, 7, 10, 0, 0, tzinfo=UTC)
+
+
+class TestConstruireCreneauComplements:
+    def test_chaine_iso_avec_offset_convertie_en_utc(self):
+        # 10:00 en UTC+2 => 08:00 UTC (NFR04).
+        slot = conflicts.construire_creneau(
+            "2026-07-10T10:00:00+02:00", "2026-07-10T12:00:00+02:00"
+        )
+        assert slot.lower == datetime(2026, 7, 10, 8, 0, tzinfo=UTC)
+        assert slot.upper == datetime(2026, 7, 10, 10, 0, tzinfo=UTC)
+
+    def test_valeur_manquante_refusee(self):
+        with pytest.raises(ValidationError):
+            conflicts.construire_creneau(None, None)
+
+
+# ---------------------------------------------------------------------------
+# Dépôt de rapports : type, signature et taille (chapitre 13)
+# ---------------------------------------------------------------------------
+
+class TestValidationPdf:
+    def test_pdf_valide_accepte(self):
+        fichier = SimpleUploadedFile("rapport.pdf", b"%PDF-1.4 contenu",
+                                     content_type="application/pdf")
+        assert validate_pdf_file(fichier) is fichier
+
+    def test_extension_non_pdf_refusee(self):
+        with pytest.raises(DjangoValidationError, match="Seuls les fichiers PDF"):
+            validate_pdf_file(SimpleUploadedFile("rapport.txt", b"%PDF-1.4 contenu"))
+
+    def test_fausse_signature_pdf_refusee(self):
+        with pytest.raises(DjangoValidationError, match="pas un véritable"):
+            validate_pdf_file(SimpleUploadedFile("rapport.pdf", b"texte sans signature"))
+
+    def test_fichier_superieur_a_dix_mo_refuse(self):
+        fichier = SimpleUploadedFile("rapport.pdf", b"%PDF-" + b"x" * MAX_DOCUMENT_SIZE)
+        with pytest.raises(DjangoValidationError, match="ne doit pas dépasser 10 Mo"):
+            validate_pdf_file(fichier)
+
+
+# ---------------------------------------------------------------------------
+# Champs des sérialiseurs (sans base)
+# ---------------------------------------------------------------------------
+
+class TestChampsSerializers:
+    def test_nom_salle_est_nettoye(self):
+        assert SalleSerializer().validate_name("  Salle 101  ") == "Salle 101"
+
+    def test_capacite_valide(self):
+        assert SalleSerializer().validate_capacity(30) == 30
+        assert SalleSerializer().validate_capacity(1) == 1
+
+    @pytest.mark.parametrize("valeur", [0, -5, None])
+    def test_capacite_nulle_ou_negative_refusee(self, valeur):
+        with pytest.raises(ValidationError):
+            SalleSerializer().validate_capacity(valeur)
+
+    def test_nom_membre_est_nettoye(self):
+        assert JuryMemberSerializer().validate_member_name("  Dr. Traoré  ") == "Dr. Traoré"
+
+    @pytest.mark.parametrize("role", ["president", "rapporteur", "examinateur"])
+    def test_roles_valides(self, role):
+        assert JuryMemberSerializer().validate_role_in_jury(role) == role
+
+    def test_role_accepte_majuscules_et_espaces(self):
+        assert JuryMemberSerializer().validate_role_in_jury("  PRESIDENT ") == "president"
+
+    def test_role_invalide_refuse(self):
+        with pytest.raises(ValidationError):
+            JuryMemberSerializer().validate_role_in_jury("chef")

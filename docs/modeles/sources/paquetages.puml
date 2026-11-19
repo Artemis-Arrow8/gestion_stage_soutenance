@@ -1,0 +1,45 @@
+@startuml paquetages
+package "frontend/lib" {
+  package "screens" as F_SCR
+  package "widgets" as F_WID
+  package "providers" as F_PROV
+  package "services" as F_SERV
+  package "models" as F_MOD
+  package "core" {
+    package "network" as F_NET
+    package "theme" as F_THEME
+    package "storage" as F_STO
+    package "config" as F_CONF
+  }
+  F_SCR ..> F_WID
+  F_SCR ..> F_PROV
+  F_SCR ..> F_SERV
+  F_WID ..> F_THEME
+  F_PROV ..> F_NET
+  F_PROV ..> F_STO
+  F_SERV ..> F_NET
+  F_SERV ..> F_MOD
+  F_NET ..> F_CONF
+}
+
+package "backend" {
+  package "config\n(settings, urls)" as B_CONF
+  package "api" {
+    package "views" as B_VIEWS
+    package "serializers" as B_SER
+    package "services" as B_SERV
+    package "documents" as B_DOC
+    package "models" as B_MOD
+    package "permissions / roles" as B_PERM
+  }
+  B_CONF ..> B_VIEWS
+  B_VIEWS ..> B_SER
+  B_VIEWS ..> B_PERM
+  B_VIEWS ..> B_MOD
+  B_SER ..> B_SERV
+  B_SERV ..> B_MOD
+  B_DOC ..> B_MOD
+}
+
+F_NET ..> B_VIEWS : HTTP / JSON
+@enduml

@@ -9,12 +9,17 @@ Ce double contrôle garantit qu'un étudiant ou un encadreur ne voit jamais
 les dossiers des autres, même en devinant un identifiant.
 """
 
-from rest_framework import viewsets
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.response import Response
 
+from api.exceptions import ConflitMetier
 from api.models import (
     Assessment,
     Campaign,
+    ConfidentialiteDossier,
     DocumentVersion,
     InternshipFolder,
     Review,
@@ -23,6 +28,7 @@ from api.models import (
 from api.permissions import (
     IsAdminOrPedagogicalResponsible,
     IsAdminResponsibleOrStudent,
+    IsPersonnelOrJury,
     IsReviewReader,
     IsSupervisor,
 )
@@ -30,11 +36,16 @@ from api.roles import get_user_role
 from api.serializers import (
     AssessmentSerializer,
     CampaignSerializer,
+    ConfidentialiteDossierSerializer,
     DocumentVersionSerializer,
+    HistoriqueDossierSerializer,
     InternshipFolderSerializer,
+    ProcesVerbalSerializer,
     ReviewSerializer,
     StudentSerializer,
 )
+from api.services import dossiers, import_etudiants, notes
+from api.services.idempotence import executer_idempotent
 
 from .helpers import etudiant_du_compte
 
@@ -49,11 +60,52 @@ class CampaignViewSet(viewsets.ModelViewSet):
 
 
 class StudentViewSet(viewsets.ModelViewSet):
-    """CRUD des fiches étudiantes (/api/students/), réservé au personnel."""
+    """
+    CRUD des fiches étudiantes (/api/students/), réservé au personnel.
+
+    Action POST /api/students/importer/ (F01) : import CSV idempotent avec
+    prévisualisation (`simulation`), voir api/services/import_etudiants.py.
+    """
 
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
     permission_classes = [IsAdminOrPedagogicalResponsible]
+
+    @action(detail=False, methods=['post'], url_path='importer',
+            parser_classes=[MultiPartParser, FormParser, JSONParser])
+    def importer(self, request):
+        """
+        Importe des étudiants dans une campagne.
+
+        Corps : `campagne` (identifiant), `simulation` (booléen, facultatif)
+        et soit un fichier CSV `fichier`, soit un texte CSV `csv`.
+        Réponse 200 : rapport {etudiants_crees, etudiants_existants,
+        dossiers_crees, dossiers_existants, erreurs[{ligne, erreur}]}.
+        """
+        campagne = Campaign.objects.filter(pk=request.data.get('campagne')).first()
+        if campagne is None:
+            raise ValidationError({'campagne': 'Choisissez une campagne existante.'})
+        fichier = request.FILES.get('fichier')
+        if fichier is not None:
+            if fichier.size > 2 * 1024 * 1024:
+                raise ValidationError({'fichier': 'Fichier trop volumineux (2 Mo maximum).'})
+            try:
+                texte = fichier.read().decode('utf-8-sig')
+            except UnicodeDecodeError as erreur:
+                raise ValidationError({'fichier': 'Le fichier doit être encodé en UTF-8.'}) from erreur
+        else:
+            texte = request.data.get('csv') or ''
+        try:
+            lignes = import_etudiants.lire_csv(texte)
+        except ValueError as erreur:
+            raise ValidationError({'fichier': str(erreur)}) from erreur
+        simulation = str(request.data.get('simulation', '')).lower() in ('1', 'true', 'oui')
+
+        def operation():
+            rapport = import_etudiants.importer(lignes, campagne, request.user, simulation)
+            return Response(rapport, status=status.HTTP_200_OK)
+
+        return executer_idempotent(request, 'etudiants.importer', operation)
 
 
 class InternshipFolderViewSet(viewsets.ModelViewSet):
@@ -71,6 +123,63 @@ class InternshipFolderViewSet(viewsets.ModelViewSet):
     serializer_class = InternshipFolderSerializer
     permission_classes = [IsAdminResponsibleOrStudent]
 
+    # --- Transitions (api/services/dossiers.py) -------------------------
+    # Chaque action passe par get_object() : un dossier hors du périmètre
+    # de l'appelant renvoie 404 (son existence n'est pas révélée).
+
+    def _repondre(self, dossier):
+        """Renvoie le dossier à jour après une transition."""
+        dossier.refresh_from_db()
+        return Response(self.get_serializer(dossier).data)
+
+    @action(detail=True, methods=['post'])
+    def soumettre(self, request, pk=None):
+        """L'étudiant soumet son dossier (brouillon/à corriger → soumis)."""
+        dossier = self.get_object()
+        return self._repondre(dossiers.soumettre(dossier.pk, request.user))
+
+    @action(detail=True, methods=['post'])
+    def autoriser(self, request, pk=None):
+        """Le responsable autorise la soutenance (validé → recevable)."""
+        dossier = self.get_object()
+        return self._repondre(dossiers.autoriser_soutenance(dossier.pk, request.user))
+
+    @action(detail=True, methods=['post'])
+    def refuser(self, request, pk=None):
+        """Le responsable refuse le dossier ; corps : {"motif": "…"}."""
+        dossier = self.get_object()
+        return self._repondre(dossiers.refuser(dossier.pk, request.user, request.data.get('motif')))
+
+    @action(detail=True, methods=['post'])
+    def rouvrir(self, request, pk=None):
+        """Le responsable rouvre un dossier refusé ou recevable ; corps : {"motif"}."""
+        dossier = self.get_object()
+        return self._repondre(dossiers.rouvrir(dossier.pk, request.user, request.data.get('motif')))
+
+    @action(detail=True, methods=['get'])
+    def historique(self, request, pk=None):
+        """Historique des transitions du dossier (preuves conservées)."""
+        dossier = self.get_object()
+        lignes = dossier.historique.select_related('acteur', 'version_document')
+        return Response(HistoriqueDossierSerializer(lignes, many=True).data)
+
+    @action(detail=True, methods=['get', 'put'])
+    def confidentialite(self, request, pk=None):
+        """
+        Lit (tous les ayants droit du dossier) ou modifie (personnel) le
+        niveau de confidentialité, l'origine et l'embargo du rapport.
+        """
+        dossier = self.get_object()
+        reglage, _ = ConfidentialiteDossier.objects.get_or_create(dossier=dossier)
+        if request.method == 'PUT':
+            if get_user_role(request.user) not in ('admin', 'responsible'):
+                raise PermissionDenied("Seul le personnel modifie la confidentialité.")
+            serializer = ConfidentialiteDossierSerializer(reglage, data=request.data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save(decide_par=request.user)
+            reglage.refresh_from_db()
+        return Response(ConfidentialiteDossierSerializer(reglage).data)
+
     def get_serializer(self, *args, **kwargs):
         """
         Rend certains champs non modifiables lorsque l'appelant est étudiant.
@@ -86,7 +195,6 @@ class InternshipFolderViewSet(viewsets.ModelViewSet):
             and self.action in ('create', 'update', 'partial_update')
         ):
             serializer.fields['student'].read_only = True
-            serializer.fields['status'].read_only = True
             if self.action in ('update', 'partial_update'):
                 serializer.fields['campaign'].read_only = True
             else:
@@ -138,9 +246,29 @@ class InternshipFolderViewSet(viewsets.ModelViewSet):
                 raise ValidationError({
                     'campaign': "Aucune campagne n'est ouverte : contactez la scolarité."
                 })
+            self._refuser_doublon(student, campagne)
             serializer.save(student=student, status='brouillon', campaign=campagne)
             return
+        self._refuser_doublon(
+            serializer.validated_data.get('student'),
+            serializer.validated_data.get('campaign'),
+        )
         serializer.save()
+
+    @staticmethod
+    def _refuser_doublon(etudiant, campagne):
+        """
+        F01 : un étudiant n'a qu'un dossier par campagne (index unique en base,
+        migration 0013) ; on l'explique par un 409 plutôt qu'une erreur 500.
+        """
+        if etudiant is not None and campagne is not None and InternshipFolder.objects.filter(
+            student=etudiant, campaign=campagne,
+        ).exists():
+            raise ConflitMetier(
+                "Un dossier de stage existe déjà pour cet étudiant dans cette "
+                "campagne : complétez-le plutôt que d'en créer un second.",
+                regle='F01',
+            )
 
     def perform_update(self, serializer):
         """
@@ -209,6 +337,9 @@ class ReviewViewSet(viewsets.ModelViewSet):
     queryset = Review.objects.all()
     serializer_class = ReviewSerializer
     permission_classes = [IsSupervisor]
+    # Un avis est une décision tracée : il ne se modifie ni ne se supprime.
+    # Une nouvelle version du rapport appelle un NOUVEL avis (STA05).
+    http_method_names = ['get', 'post', 'head', 'options']
 
     def get_permissions(self):
         """Choisit la permission selon l'action (lecture plus large qu'écriture)."""
@@ -262,33 +393,114 @@ class ReviewViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """
-        Crée un avis en imposant l'auteur et son rôle.
+        Enregistre l'avis pédagogique via la machine à états du dossier.
+
+        L'auteur est déduit du jeton ; l'avis est rattaché à la version
+        examinée et fait passer le dossier soumis à « valide » (favorable)
+        ou « a_corriger » (défavorable).
 
         Lève :
-            PermissionDenied : un encadreur tente de commenter un dossier
-            qui ne lui est pas affecté.
+            PermissionDenied : encadreur non affecté au dossier ;
+            ConflitMetier : dossier non soumis ou version périmée.
         """
-        if get_user_role(self.request.user) == 'supervisor':
-            document = serializer.validated_data['document_version']
-            if not document.folder.supervisor_assignments.filter(
-                user=self.request.user
-            ).exists():
-                raise PermissionDenied(
-                    "Vous ne pouvez donner un avis que sur un dossier qui vous est affecté."
-                )
-        # L'auteur n'est jamais fourni par le client : il est déduit du jeton.
-        serializer.save(
-            author=self.request.user,
-            author_role='encadreur',
+        donnees = serializer.validated_data
+        serializer.instance = dossiers.enregistrer_avis_pedagogique(
+            donnees['document_version'].pk,
+            self.request.user,
+            (donnees.get('decision') or '').strip().lower(),
+            donnees.get('comments') or '',
         )
 
 
 class AssessmentViewSet(viewsets.ModelViewSet):
-    """CRUD des évaluations et notes finales (/api/assessments/), réservé au personnel."""
+    """
+    Évaluations et procès-verbaux (/api/assessments/), F06.
+
+    * Personnel : toutes les évaluations. Membre du jury : uniquement celles
+      des soutenances de son jury ; il saisit les notes, le président les
+      approuve. La moyenne est calculée par le serveur (grille 40/60).
+    * Une évaluation approuvée ne se modifie ni ne se supprime (STA06) :
+      POST /rectifier/ (responsable, avec motif) crée une nouvelle version
+      du procès-verbal (STA12).
+    * POST /approuver/ : approbation (notes complètes, jury complet).
+    * GET /proces-verbaux/ : toutes les versions du procès-verbal.
+    """
 
     # Jointures préchargées (étudiant, jury) et tri par date de soutenance.
     queryset = Assessment.objects.select_related(
-        'defense__folder__student', 'defense__jury',
+        'defense__folder__student', 'defense__folder__campaign', 'defense__jury',
     ).order_by('defense__slot_range', 'pk')
     serializer_class = AssessmentSerializer
-    permission_classes = [IsAdminOrPedagogicalResponsible]
+    permission_classes = [IsPersonnelOrJury]
+
+    def get_queryset(self):
+        """Un membre du jury ne voit que les évaluations de son jury."""
+        base = super().get_queryset()
+        if get_user_role(self.request.user) == 'jury':
+            return base.filter(
+                defense__jury__members__account__user=self.request.user
+            ).distinct()
+        return base
+
+    def _enregistrer(self, serializer):
+        """Sauvegarde puis recalcule la moyenne selon la grille."""
+        evaluation = serializer.save()
+        notes.recalculer(evaluation)
+        evaluation.save(update_fields=['final_average'])
+
+    def perform_create(self, serializer):
+        """Crée une évaluation (personnel ou membre du jury de la soutenance)."""
+        brouillon = Assessment(defense=serializer.validated_data['defense'])
+        if not notes.peut_saisir(self.request.user, brouillon):
+            raise PermissionDenied("Vous ne siégez pas au jury de cette soutenance.")
+        self._enregistrer(serializer)
+
+    def perform_update(self, serializer):
+        """Modifie une note non approuvée (STA06 sinon)."""
+        notes.refuser_si_approuvee(serializer.instance)
+        if not notes.peut_saisir(self.request.user, serializer.instance):
+            raise PermissionDenied("Vous ne siégez pas au jury de cette soutenance.")
+        self._enregistrer(serializer)
+
+    def perform_destroy(self, instance):
+        """Seul le personnel supprime une évaluation, jamais approuvée."""
+        notes.refuser_si_approuvee(instance)
+        if get_user_role(self.request.user) not in ('admin', 'responsible'):
+            raise PermissionDenied("Seul le personnel peut supprimer une évaluation.")
+        instance.delete()
+
+    @action(detail=True, methods=['post'])
+    def approuver(self, request, pk=None):
+        """Approuve les notes et produit la version 1 du procès-verbal."""
+        evaluation = self.get_object()
+
+        def operation():
+            pv = notes.approuver(evaluation.pk, request.user)
+            return Response(ProcesVerbalSerializer(pv).data, status=status.HTTP_201_CREATED)
+
+        return executer_idempotent(request, f'notes.approuver.{evaluation.pk}', operation)
+
+    @action(detail=True, methods=['post'])
+    def rectifier(self, request, pk=None):
+        """
+        Rectifie une note approuvée ; corps : report_grade, oral_grade, motif.
+        Produit une nouvelle version du procès-verbal.
+        """
+        evaluation = self.get_object()
+
+        def operation():
+            pv = notes.rectifier(
+                evaluation.pk, request.user,
+                request.data.get('report_grade'), request.data.get('oral_grade'),
+                request.data.get('motif'),
+            )
+            return Response(ProcesVerbalSerializer(pv).data, status=status.HTTP_201_CREATED)
+
+        return executer_idempotent(request, f'notes.rectifier.{evaluation.pk}', operation)
+
+    @action(detail=True, methods=['get'], url_path='proces-verbaux')
+    def proces_verbaux(self, request, pk=None):
+        """Toutes les versions du procès-verbal, de la plus ancienne à la plus récente."""
+        evaluation = self.get_object()
+        versions = evaluation.proces_verbaux.select_related('grille', 'approuve_par')
+        return Response(ProcesVerbalSerializer(versions, many=True).data)

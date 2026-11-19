@@ -39,13 +39,24 @@ class InternshipFolderSerializer(serializers.ModelSerializer):
     """
     Dossier de stage.
 
-    Certains champs (`student`, `status`, `campaign`) sont rendus en lecture
-    seule dynamiquement par la vue lorsque l'appelant est un étudiant.
+    `status` est TOUJOURS en lecture seule : il ne change que par les
+    transitions de api/services/dossiers.py (soumettre, autoriser…), jamais
+    par une modification directe (STA11). `student` et `campaign` sont en
+    plus rendus non modifiables par la vue lorsque l'appelant est étudiant.
+    `confidentialite` indique le niveau (« standard » ou « confidentiel »).
     """
+
+    confidentialite = serializers.SerializerMethodField()
 
     class Meta:
         model = InternshipFolder
         fields = '__all__'
+        read_only_fields = ('status',)
+
+    def get_confidentialite(self, dossier):
+        """Niveau de confidentialité du dossier (standard par défaut)."""
+        reglage = getattr(dossier, 'confidentialite', None)
+        return reglage.niveau if reglage is not None else 'standard'
 
 
 class DocumentVersionSerializer(serializers.ModelSerializer):
@@ -75,6 +86,11 @@ class AssessmentSerializer(serializers.ModelSerializer):
     """
     Notes (rapport, oral, moyenne) et validation finale d'une soutenance.
 
+    La moyenne (`final_average`) et l'approbation (`is_approved`) sont en
+    lecture seule : la moyenne est TOUJOURS calculée par le serveur selon la
+    grille de la campagne (api/services/notes.py) et l'approbation passe par
+    l'action /approuver/. `grille` décrit la règle de calcul appliquée.
+
     Règles ajoutées :
         * une seule évaluation par soutenance ;
         * si la moyenne finale n'est pas fournie, elle est calculée
@@ -89,6 +105,10 @@ class AssessmentSerializer(serializers.ModelSerializer):
     subject = serializers.CharField(source='defense.folder.subject', read_only=True)
     jury_name = serializers.CharField(source='defense.jury.name', read_only=True, default='')
     defense_start = serializers.SerializerMethodField()
+    grille = serializers.SerializerMethodField()
+    nombre_proces_verbaux = serializers.IntegerField(
+        source='proces_verbaux.count', read_only=True,
+    )
 
     class Meta:
         model = Assessment
@@ -103,16 +123,24 @@ class AssessmentSerializer(serializers.ModelSerializer):
             'oral_grade',
             'final_average',
             'is_approved',
+            'grille',
+            'nombre_proces_verbaux',
         ]
+        read_only_fields = ('final_average', 'is_approved')
 
     def get_defense_start(self, assessment):
         """Retourne le début du créneau de la soutenance (ISO 8601) ou None."""
         slot = assessment.defense.slot_range if assessment.defense_id else None
         return slot.lower.isoformat() if slot is not None and slot.lower else None
 
+    def get_grille(self, evaluation):
+        """Règle de calcul en vigueur (coefficients), sans rien créer."""
+        from api.services.notes import grille_affichee
+        return grille_affichee(evaluation.defense.folder.campaign)
+
     def validate(self, attrs):
         """
-        Vérifie l'unicité par soutenance et complète la moyenne finale.
+        Vérifie l'unicité par soutenance (la moyenne est calculée par la vue).
 
         Lève :
             ValidationError : une évaluation existe déjà pour cette soutenance.
@@ -127,15 +155,4 @@ class AssessmentSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {'defense': 'Cette soutenance a déjà une évaluation : modifiez-la.'}
                 )
-
-        # Valeurs effectives (fournies, sinon actuelles en modification).
-        def valeur(champ):
-            if champ in attrs:
-                return attrs[champ]
-            return getattr(self.instance, champ, None) if self.instance else None
-
-        rapport, oral = valeur('report_grade'), valeur('oral_grade')
-        # Moyenne calculée seulement si elle n'est pas saisie explicitement.
-        if 'final_average' not in attrs and rapport is not None and oral is not None:
-            attrs['final_average'] = round((rapport + oral) / 2, 2)
         return attrs

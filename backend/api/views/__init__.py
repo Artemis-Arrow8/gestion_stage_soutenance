@@ -5,7 +5,10 @@ Organisation :
     * `auth`     : connexion, profil, mot de passe, déconnexion (JWT) ;
     * `accounts` : administration des comptes utilisateurs ;
     * `academic` : campagnes, étudiants, dossiers, documents, avis, évaluations ;
-    * `planning` : salles, jurys, membres de jury et soutenances ;
+    * `planning` : salles, jurys, membres de jury et soutenances (cycle de
+                   vie et publication) ;
+    * `socle`    : indisponibilités, versions du planning, convocations,
+                   habilitations ;
     * `system`   : page d'accueil publique de la racine `/` ;
     * `helpers`  : fonctions utilitaires partagées.
 
@@ -31,6 +34,12 @@ from .auth import (
 )
 from .helpers import debut_jour_utc, etudiant_du_compte, lire_parametre_date
 from .planning import DefenseViewSet, JuryMemberViewSet, JuryViewSet, SalleViewSet
+from .socle import (
+    ConvocationViewSet,
+    HabilitationDossierViewSet,
+    IndisponibiliteViewSet,
+    VersionPlanningViewSet,
+)
 from .system import accueil
 
 # Alias historiques conservés pour la rétrocompatibilité : les tests unitaires
@@ -43,8 +52,11 @@ __all__ = [
     'AssessmentViewSet',
     'CampaignViewSet',
     'ChangePasswordView',
+    'ConvocationViewSet',
     'DefenseViewSet',
     'DocumentVersionViewSet',
+    'HabilitationDossierViewSet',
+    'IndisponibiliteViewSet',
     'InternshipFolderViewSet',
     'JuryMemberViewSet',
     'JuryViewSet',
@@ -55,6 +67,7 @@ __all__ = [
     'StudentViewSet',
     'UserAccountViewSet',
     'UserProfileView',
+    'VersionPlanningViewSet',
     'accueil',
     'construire_profil',
     'debut_jour_utc',

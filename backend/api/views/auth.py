@@ -16,6 +16,7 @@ from django.contrib.auth import authenticate, password_validation
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import permissions, status
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -134,12 +135,17 @@ class LoginView(APIView):
         200 : {"message", "user", "access", "refresh"} ;
         400 : champs manquants ou de mauvais type ;
         401 : identifiants incorrects ;
-        403 : compte valide mais sans rôle SGSUS.
+        403 : compte valide mais sans rôle SGSUS ;
+        429 : trop de tentatives depuis la même adresse (force brute).
     """
 
     # Vue publique : on désactive l'authentification et les permissions DRF.
     authentication_classes = []
     permission_classes = []
+    # Limitation des tentatives par adresse IP (chapitre 13), réglée par
+    # SGSUS_LIMITE_CONNEXION (10 par minute par défaut).
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'connexion'
 
     def post(self, request):
         """Valide la saisie, authentifie le compte puis renvoie les jetons."""

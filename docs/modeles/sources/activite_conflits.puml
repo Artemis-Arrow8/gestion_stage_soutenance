@@ -1,0 +1,35 @@
+@startuml activite_conflits
+start
+:Recevoir dossier, jury, salle, début, fin;
+if (fin > début et durée ≤ 8 h ?) then (non)
+  :Refuser : créneau invalide (400);
+  stop
+endif
+if (Dossier recevable ou avis favorable ? (F03)) then (non)
+  :Refuser : dossier non recevable (400);
+  stop
+endif
+if (Salle existante et active ?) then (non)
+  :Refuser : salle indisponible (400);
+  stop
+endif
+if (Jury existant avec au moins un membre ?) then (non)
+  :Refuser : jury incomplet (400);
+  stop
+endif
+if (Salle déjà occupée sur ce créneau ?) then (oui)
+  :Refuser : conflit de salle (400);
+  stop
+endif
+if (Un membre du jury siège déjà sur ce créneau ?) then (oui)
+  :Refuser : conflit de jury (400);
+  stop
+endif
+:Insérer la soutenance;
+if (Contrainte d'exclusion PostgreSQL violée ?\n(requête concurrente)) then (oui)
+  :Refuser : conflit de réservation EXG01 (400);
+  stop
+endif
+:Soutenance créée (201);
+stop
+@enduml

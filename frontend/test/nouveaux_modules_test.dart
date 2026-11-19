@@ -62,10 +62,16 @@ void main() {
           final corps = jsonDecode(request.body) as Map<String, dynamic>;
           expect(corps['defense'], 4);
           expect(corps['report_grade'], '14.00');
-          // La moyenne est calculée par le serveur.
+          // La moyenne et l'approbation sont décidées par le serveur.
           expect(corps.containsKey('final_average'), isFalse);
+          expect(corps.containsKey('is_approved'), isFalse);
           return http.Response(
-            jsonEncode({'id': 2, 'defense': 4, 'final_average': '15.00'}),
+            jsonEncode({
+              'id': 2,
+              'defense': 4,
+              'final_average': '15.20',
+              'grille': {'poids_rapport': '0.400', 'poids_oral': '0.600'},
+            }),
             201,
           );
         }),
@@ -75,10 +81,26 @@ void main() {
         defenseId: 4,
         reportGrade: 14,
         oralGrade: 16,
-        isApproved: false,
       );
 
-      expect(creee.finalAverage, 15);
+      // Grille fictive 40/60 : 0,4 × 14 + 0,6 × 16 = 15,20 (STA10).
+      expect(creee.finalAverage, 15.2);
+      expect(creee.apercuMoyenne(14, 16), closeTo(15.2, 1e-9));
+      // Une note absente reste absente : pas de moyenne.
+      expect(creee.apercuMoyenne(14, null), isNull);
+    });
+
+    test('l’approbation envoie une clé d’idempotence', () async {
+      final service = EvaluationService(
+        _api((request) async {
+          expect(request.url.path, '/api/assessments/2/approuver/');
+          expect(request.headers['Idempotency-Key'], 'cle-de-test');
+          return http.Response(jsonEncode({'version': 1, 'statut': 'approuve'}), 201);
+        }),
+      );
+
+      final pv = await service.approuver(2, cle: 'cle-de-test');
+      expect(pv['version'], 1);
     });
 
     test('formatNote affiche un tiret pour une note absente', () {
@@ -109,17 +131,19 @@ void main() {
       expect(dossier['status'], 'brouillon');
     });
 
-    test('le personnel change le statut d’un dossier', () async {
+    test('le responsable refuse un dossier avec un motif (transition)', () async {
       final service = DocumentService(
         _api((request) async {
-          expect(request.method, 'PATCH');
-          expect(request.url.path, '/api/internship-folders/3/');
-          expect(jsonDecode(request.body), {'status': 'recevable'});
-          return http.Response(jsonEncode({'id': 3, 'status': 'recevable'}), 200);
+          // Le statut ne se modifie jamais directement : action dédiée.
+          expect(request.method, 'POST');
+          expect(request.url.path, '/api/internship-folders/3/refuser/');
+          expect(jsonDecode(request.body), {'motif': 'Pièces manquantes'});
+          return http.Response(jsonEncode({'id': 3, 'status': 'rejete'}), 200);
         }),
       );
 
-      await service.setFolderStatus(3, 'recevable');
+      final dossier = await service.transition(3, 'refuser', motif: 'Pièces manquantes');
+      expect(dossier['status'], 'rejete');
     });
 
     test('le personnel confirme puis supprime une soutenance', () async {
@@ -128,21 +152,26 @@ void main() {
         _api((request) async {
           appels.add('${request.method} ${request.url.path}');
           if (request.method == 'DELETE') return http.Response('', 204);
-          expect(jsonDecode(request.body), {'status': 'confirme'});
           return http.Response(jsonEncode({'id': 7}), 200);
         }),
       );
 
-      await service.updateDefenseStatus(7, 'confirme');
+      // Le statut change par des actions dédiées, jamais par PATCH.
+      await service.confirmer(7);
       await service.deleteDefense(7);
 
-      expect(appels, ['PATCH /api/soutenances/7/', 'DELETE /api/soutenances/7/']);
+      expect(appels, [
+        'POST /api/soutenances/7/confirmer/',
+        'DELETE /api/soutenances/7/',
+      ]);
     });
   });
 
   group('Libellés et navigation', () {
     test('les statuts techniques ont un libellé français', () {
-      expect(libelleStatut('planifie'), 'Planifiée');
+      expect(libelleStatut('planifie'), 'Proposée');
+      expect(libelleStatut('a_corriger'), 'À corriger');
+      expect(libelleStatut('publie'), 'Publiée');
       expect(libelleStatut('recevable'), 'Recevable');
       expect(libelleStatut('rejete'), 'Rejeté');
       // Statut inconnu : affiché avec une majuscule.
@@ -153,6 +182,8 @@ void main() {
       expect(Session.sections('admin'), contains(AppSection.evaluations));
       expect(Session.sections('responsible'), contains(AppSection.evaluations));
       expect(Session.sections('student'), isNot(contains(AppSection.evaluations)));
+      // Le jury saisit les notes des soutenances de son jury.
+      expect(Session.sections('jury'), contains(AppSection.evaluations));
       for (final role in ['admin', 'responsible', 'supervisor', 'jury', 'student']) {
         expect(Session.sections(role), contains(AppSection.profil));
       }

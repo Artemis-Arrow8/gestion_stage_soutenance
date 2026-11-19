@@ -41,6 +41,19 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
+  # Police Roboto embarquée (sous-ensemble latin : accents, « », €…).
+  # L'application Web n'a ainsi plus besoin de la télécharger chez Google à
+  # chaque ouverture : indispensable pour le mode hors ligne et la version
+  # PC sans Internet. Licence Apache 2.0 : assets/fonts/LICENSE-Roboto.txt.
+  fonts:
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto-Regular.ttf
+        - asset: assets/fonts/Roboto-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Roboto-Bold.ttf
+          weight: 700
+
   # Définition des actifs (images, polices, etc.) si nécessaire
   # assets:
   #   - assets/images/

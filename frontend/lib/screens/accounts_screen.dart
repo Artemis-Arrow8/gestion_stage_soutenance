@@ -550,8 +550,8 @@ class _AccountDialogState extends State<_AccountDialog> {
       ),
       content: SizedBox(
         width: 500,
-        child: Form(
-          key: _formKey,
+        child: SgFormulaire(
+          formKey: _formKey,
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -792,8 +792,8 @@ class _StudentDialogState extends State<_StudentDialog> {
       title: const Text('Créer une fiche étudiant'),
       content: SizedBox(
         width: 420,
-        child: Form(
-          key: _formKey,
+        child: SgFormulaire(
+          formKey: _formKey,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [

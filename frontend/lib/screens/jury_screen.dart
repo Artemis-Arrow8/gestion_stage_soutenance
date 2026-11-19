@@ -18,6 +18,7 @@ import '../models/planning_refs.dart';
 import '../providers/auth_provider.dart';
 import '../providers/planning_store.dart';
 import '../services/planning_service.dart';
+import '../widgets/indisponibilites_sheet.dart';
 import '../widgets/app_shell.dart';
 import '../widgets/ui_kit.dart';
 import 'defense_detail_screen.dart';
@@ -411,6 +412,19 @@ class _JuryScreenState extends State<JuryScreen> {
                     ),
                     if (_peutGerer) ...[
                       const SizedBox(width: 6),
+                      // Indisponibilités récurrentes du membre (STA09).
+                      SgIconBtn(
+                        icon: Icons.event_busy_rounded,
+                        tooltip: 'Indisponibilités',
+                        tone: SgTone.info,
+                        onPressed: () => ouvrirIndisponibilites(
+                          context,
+                          service: _service,
+                          typeRessource: 'membre',
+                          ressource: m.name,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
                       SgIconBtn(
                         icon: Icons.person_remove_outlined,
                         tooltip: 'Retirer du jury',
@@ -496,8 +510,8 @@ class _JuryNameDialogState extends State<_JuryNameDialog> {
       title: const Text('Nouveau jury'),
       content: SizedBox(
         width: 380,
-        child: Form(
-          key: _formKey,
+        child: SgFormulaire(
+          formKey: _formKey,
           child: TextFormField(
             controller: _nom,
             autofocus: true,
@@ -565,8 +579,8 @@ class _MemberDialogState extends State<_MemberDialog> {
       title: Text('Ajouter un membre — ${widget.juryName}'),
       content: SizedBox(
         width: 420,
-        child: Form(
-          key: _formKey,
+        child: SgFormulaire(
+          formKey: _formKey,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [

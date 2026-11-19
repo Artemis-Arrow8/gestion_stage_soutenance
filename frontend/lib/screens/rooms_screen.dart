@@ -526,8 +526,8 @@ class _RoomDialogState extends State<_RoomDialog> {
       ),
       content: SizedBox(
         width: 420,
-        child: Form(
-          key: _formKey,
+        child: SgFormulaire(
+          formKey: _formKey,
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,

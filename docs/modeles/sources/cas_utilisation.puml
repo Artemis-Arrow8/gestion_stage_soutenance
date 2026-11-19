@@ -1,0 +1,79 @@
+@startuml cas_utilisation
+left to right direction
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+
+actor "Étudiant" as ETU
+actor "Encadreur" as ENC
+actor "Membre du jury" as JUR
+actor "Responsable\npédagogique" as RESP
+actor "Administrateur" as ADM
+ADM -|> RESP
+
+rectangle "SGSUS" {
+  usecase "S'authentifier" as UC_AUTH
+  usecase "Consulter son profil" as UC_PROFIL
+  usecase "Changer son mot de passe" as UC_MDP
+
+  usecase "Créer / modifier\nson dossier de stage" as UC_DOSSIER
+  usecase "Déposer une version\ndu rapport PDF" as UC_DEPOT
+  usecase "Contrôler le fichier PDF" as UC_PDF
+  usecase "Consulter les avis" as UC_AVIS_LIRE
+  usecase "Consulter sa soutenance\net sa note validée" as UC_MA_SOUT
+
+  usecase "Consulter les dossiers\naffectés" as UC_DOSS_AFF
+  usecase "Télécharger un rapport" as UC_TELECH
+  usecase "Donner un avis\nde recevabilité" as UC_AVIS
+
+  usecase "Consulter son planning\nde jury" as UC_PLAN_JURY
+
+  usecase "Gérer les campagnes" as UC_CAMP
+  usecase "Changer le statut\nd'un dossier" as UC_STATUT_DOSS
+  usecase "Gérer les salles" as UC_SALLES
+  usecase "Constituer les jurys" as UC_JURYS
+  usecase "Planifier une soutenance" as UC_PLANIF
+  usecase "Vérifier les conflits\n(EXG01)" as UC_CONFLITS
+  usecase "Vérifier la recevabilité\n(F03)" as UC_RECEV
+  usecase "Changer le statut\nd'une soutenance" as UC_STATUT_SOUT
+  usecase "Consulter les conflits" as UC_VOIR_CONFLITS
+  usecase "Saisir les notes" as UC_NOTES
+  usecase "Valider la note" as UC_VALIDER
+
+  usecase "Gérer les comptes\net les rôles" as UC_COMPTES
+  usecase "Créer une fiche étudiant" as UC_FICHE
+}
+
+ETU --> UC_DOSSIER
+ETU --> UC_DEPOT
+ETU --> UC_AVIS_LIRE
+ETU --> UC_MA_SOUT
+ENC --> UC_DOSS_AFF
+ENC --> UC_TELECH
+ENC --> UC_AVIS
+JUR --> UC_PLAN_JURY
+RESP --> UC_CAMP
+RESP --> UC_STATUT_DOSS
+RESP --> UC_SALLES
+RESP --> UC_JURYS
+RESP --> UC_PLANIF
+RESP --> UC_STATUT_SOUT
+RESP --> UC_VOIR_CONFLITS
+RESP --> UC_NOTES
+ADM --> UC_COMPTES
+ADM --> UC_FICHE
+
+ETU --> UC_AUTH
+ENC --> UC_AUTH
+JUR --> UC_AUTH
+RESP --> UC_AUTH
+ETU --> UC_PROFIL
+ENC --> UC_PROFIL
+JUR --> UC_PROFIL
+RESP --> UC_PROFIL
+UC_PROFIL <.. UC_MDP : <<extend>>
+
+UC_DEPOT ..> UC_PDF : <<include>>
+UC_PLANIF ..> UC_CONFLITS : <<include>>
+UC_PLANIF ..> UC_RECEV : <<include>>
+UC_VALIDER .> UC_NOTES : <<extend>>
+@enduml

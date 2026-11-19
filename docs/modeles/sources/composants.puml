@@ -1,0 +1,43 @@
+@startuml composants
+skinparam componentStyle rectangle
+
+package "Client Flutter (Web / mobile)" {
+  [Écrans (screens)] as SCR
+  [Composants UI (widgets, ui_kit)] as WID
+  [État partagé (providers)\nAuthProvider, PlanningStore] as PROV
+  [Services métier\nPlanning, Documents,\nAdministration, Évaluations] as SERV
+  [ApiService\n(client HTTP unique)] as API
+  SCR --> WID
+  SCR --> PROV
+  SCR --> SERV
+  PROV --> API
+  SERV --> API
+}
+
+interface "API REST JSON\n(JWT)" as REST
+
+package "Backend Django" {
+  [Middlewares\n(santé, CORS, sécurité)] as MW
+  [Routes (urls)] as URLS
+  [Vues (views)\nauth, academic,\nplanning, accounts] as VIEWS
+  [Sérialiseurs] as SER
+  [Services métier\nconflicts, sante] as SRV
+  [Modèles (ORM)] as MOD
+  [Administration Django\n(/admin/)] as ADMIN
+  MW --> URLS
+  URLS --> VIEWS
+  VIEWS --> SER
+  SER --> SRV
+  VIEWS --> MOD
+  SRV --> MOD
+  ADMIN --> MOD
+}
+
+database "PostgreSQL 17\n(contraintes EXG01)" as DB
+folder "Stockage des PDF\n(MEDIA_ROOT)" as FS
+
+API --> REST
+REST - MW
+MOD --> DB
+VIEWS --> FS
+@enduml

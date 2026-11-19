@@ -102,6 +102,26 @@ services:
       media-init:
         condition: service_completed_successfully
 
+  # ---------------------------------------------------------------------------
+  # VERSION PC (sans Render ni Internet) : site Flutter + API à une seule
+  # adresse, http://localhost:8080. Profil « pc » : ce service ne démarre
+  # qu'avec `docker compose --profile pc up` (scripts/demarrer-pc.ps1).
+  # Le site est compilé à l'avance dans frontend/build/web_pc.
+  # ---------------------------------------------------------------------------
+  frontend:
+    image: nginx:1.27-alpine
+    profiles: ["pc"]
+    restart: unless-stopped
+    volumes:
+      - ./frontend/build/web_pc:/usr/share/nginx/html:ro
+      - ./frontend/nginx-pc.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      # 127.0.0.1 : PC seulement ; 0.0.0.0 (option -Reseau du script) :
+      # accessible aussi depuis un téléphone connecté au même Wi-Fi.
+      - "${FRONTEND_BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      - backend
+
   media-init:
     build:
       context: .

@@ -1,0 +1,110 @@
+@startuml classes
+hide circle
+skinparam classAttributeIconSize 0
+
+class User <<Django>> {
+  id : Integer
+  username : String {unique}
+  first_name : String
+  last_name : String
+  email : String
+  password : String (haché)
+  is_active : Boolean
+  is_superuser : Boolean
+}
+class Group <<Django>> {
+  id : Integer
+  name : String (admin, responsible, supervisor, student, jury)
+}
+class Campaign {
+  id : Integer
+  academic_year : String
+  is_active : Boolean
+  created_at : DateTime
+}
+class Student {
+  id : Integer
+  student_number : String {unique}
+  full_name : String
+  email : String {unique}
+}
+class StudentAccount
+class InternshipFolder {
+  id : Integer
+  company_name : String
+  subject : Text
+  status : String
+  created_at : DateTime
+}
+class FolderSupervisor
+class DocumentVersion {
+  id : Integer
+  version_number : Integer
+  file_path : String
+  uploaded_at : DateTime
+}
+class Review {
+  id : Integer
+  author_role : String
+  decision : String
+  comments : Text
+  created_at : DateTime
+}
+class Room {
+  id : Integer
+  name : String {unique}
+  capacity : Integer {> 0}
+  is_active : Boolean
+}
+class Jury {
+  id : Integer
+  name : String
+  is_complete : Boolean
+}
+class JuryMember {
+  id : Integer
+  member_name : String
+  role_in_jury : String
+}
+class JuryMemberAccount
+class Defense {
+  id : Integer
+  room_name : String
+  slot_range : Intervalle[DateTime UTC]
+  status : String
+}
+class Assessment {
+  id : Integer
+  report_grade : Decimal(5,2)
+  oral_grade : Decimal(5,2)
+  final_average : Decimal(5,2)
+  is_approved : Boolean
+}
+
+User "0..*" -- "0..*" Group : rôle >
+User "1" -- "0..1" StudentAccount
+StudentAccount "0..1" -- "1" Student
+Campaign "1" -- "0..*" InternshipFolder
+Student "1" -- "0..*" InternshipFolder
+InternshipFolder "1" *-- "0..*" DocumentVersion
+DocumentVersion "1" *-- "0..*" Review
+Review "0..*" -- "0..1" User : auteur >
+(User, InternshipFolder) .. FolderSupervisor
+Jury "1" *-- "0..*" JuryMember
+User "1" -- "0..1" JuryMemberAccount
+JuryMemberAccount "0..1" -- "1" JuryMember
+InternshipFolder "1" -- "0..*" Defense
+Jury "0..1" -- "0..*" Defense
+Room "1" -- "0..*" Defense : par room_name >
+Defense "1" -- "0..1" Assessment
+
+note bottom of Defense
+  {EXG01} pas de chevauchement de
+  créneau pour une même salle
+  ni pour un même jury
+end note
+note right of Assessment
+  {0 ≤ note ≤ 20}
+  final_average = (rapport + oral) / 2
+end note
+@enduml

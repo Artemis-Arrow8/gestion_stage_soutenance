@@ -1,0 +1,35 @@
+@startuml sequence_depot
+autonumber
+actor "Étudiant" as ETU
+participant "DocumentsScreen" as UI
+participant "DocumentService" as DS
+participant "DocumentUploadView" as V
+participant "validate_pdf_file" as VAL
+participant "upload_document\n(transaction)" as S
+database PostgreSQL as DB
+collections "Stockage fichiers" as FS
+
+ETU -> UI : choisit un PDF
+UI -> UI : taille ≤ 10 Mo ?
+UI -> DS : uploadDocument(dossier, fichier)
+DS -> V : POST /api/documents/upload/ (multipart)
+V -> DB : le dossier appartient-il à l'étudiant ?
+alt dossier d'un autre étudiant
+  V --> DS : 403
+else dossier autorisé
+  V -> VAL : contrôler le fichier
+  alt fichier invalide (taille, extension, signature)
+    VAL --> V : ValidationError
+    V --> DS : 400 { file: [message] }
+  else fichier valide
+    V -> S : upload_document(dossier, fichier)
+    S -> DB : SELECT ... FOR UPDATE (verrou du dossier)
+    S -> DB : dernière version ?
+    S -> FS : enregistrer documents/folder_X/<uuid>.pdf
+    S -> DB : INSERT document_version (n + 1)
+    S --> V : version créée
+    V --> DS : 201 { version }
+    DS --> UI : « Document envoyé »
+  end
+end
+@enduml

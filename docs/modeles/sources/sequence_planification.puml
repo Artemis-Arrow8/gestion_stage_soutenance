@@ -1,0 +1,35 @@
+@startuml sequence_planification
+autonumber
+actor Responsable
+participant "DefenseFormScreen" as UI
+participant "PlanningService" as PS
+participant "DefenseViewSet\n+ DefenseSerializer" as V
+participant "service conflicts" as C
+database PostgreSQL as DB
+
+Responsable -> UI : choisit dossier, jury, salle, créneau
+UI -> UI : signaler les conflits probables (aide locale)
+Responsable -> UI : Enregistrer
+UI -> PS : createDefense(...)
+PS -> V : POST /api/soutenances/
+V -> C : verifier_toutes_regles(dossier, jury, salle, créneau)
+C -> DB : dossier recevable ? salle active ?\nchevauchement salle / jury ?
+DB --> C : résultats
+alt une règle est violée
+  C --> V : ValidationError
+  V --> PS : 400 { message explicite }
+  PS --> UI : afficher l'erreur
+else règles respectées
+  V -> DB : INSERT INTO defense
+  alt conflit concurrent (contrainte d'exclusion)
+    DB --> V : IntegrityError (prevent_*_double_booking)
+    V --> PS : 400 « Conflit de réservation (EXG01) »
+    PS --> UI : afficher l'erreur
+  else insertion réussie
+    DB --> V : soutenance créée
+    V --> PS : 201 { soutenance }
+    PS --> UI : succès
+    UI -> PS : recharger le planning partagé
+  end
+end
+@enduml

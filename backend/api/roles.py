@@ -38,8 +38,8 @@ def has_role_group(user, role):
         try:
             return user.student_account is not None
         except AttributeError:
-            # Compatibilité : objet portant directement un attribut `role`.
-            return getattr(user, 'role', None) == 'student'
+            # Relation inverse absente : le compte n'est pas lié à une fiche.
+            return False
     if role == 'jury':
         try:
             return user.jury_member_account is not None

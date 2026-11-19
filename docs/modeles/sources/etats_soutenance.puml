@@ -1,0 +1,13 @@
+@startuml etats_soutenance
+[*] --> planifie : proposer (sans conflit EXG01,\ndossier recevable, disponibilités)
+planifie --> confirme : confirmer [jury complet] (F04)
+confirme --> planifie : modification du créneau
+confirme --> publie : publier (VersionPlanning + convocations)
+publie --> publie : reporter [motif]\n(nouvelle version, anciennes convocations remplacées)
+publie --> termine : marquer comme tenue
+planifie --> annule : annuler
+confirme --> annule : annuler
+publie --> annule : annuler (convocations annulées)
+annule : ne réserve plus salle ni jury
+termine : notes saisissables (F06)
+@enduml

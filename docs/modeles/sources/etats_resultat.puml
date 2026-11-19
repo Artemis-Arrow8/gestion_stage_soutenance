@@ -1,0 +1,7 @@
+@startuml etats_resultat
+[*] --> brouillon : saisie (jury ou personnel)
+brouillon --> brouillon : modification des notes
+brouillon --> approuve : approuver [notes complètes, jury complet]\n→ PV v1
+approuve --> approuve : rectifier [responsable, motif]\n→ PV v(n+1), PV précédent « remplacé »
+approuve : modification directe refusée (STA06)
+@enduml

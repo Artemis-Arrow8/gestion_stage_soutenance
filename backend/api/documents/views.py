@@ -20,15 +20,17 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from api.documents.services import upload_document
-from api.models import DocumentVersion, FolderSupervisor, InternshipFolder
+from api.models import DocumentVersion, InternshipFolder
 from api.roles import get_user_role
 from api.serializers import DocumentVersionSerializer
+from api.services.acces_documents import decision_acces, journaliser_acces
 
 # Rôles autorisés à déposer un document.
 ROLES_DEPOT = ('admin', 'responsible', 'student')
 
-# Rôles autorisés à télécharger un document (sous réserve de périmètre).
-ROLES_TELECHARGEMENT = ('admin', 'responsible', 'student', 'supervisor')
+# Les droits de téléchargement sont décidés par
+# api.services.acces_documents.decision_acces (rôle, périmètre,
+# confidentialité, habilitations).
 
 
 class DocumentUploadView(APIView):
@@ -108,7 +110,7 @@ class DocumentUploadView(APIView):
 
         # Validation PDF + versionnement + stockage (transactionnel).
         try:
-            document_version = upload_document(folder.pk, file_obj)
+            document_version = upload_document(folder.pk, file_obj, request.user)
         except DjangoValidationError as error:
             return Response(
                 {"file": error.messages},
@@ -143,34 +145,13 @@ class DocumentDownloadView(APIView):
         except DocumentVersion.DoesNotExist:
             raise Http404("Le document demandé est introuvable.")
 
-        role = get_user_role(request.user)
-        if role not in ROLES_TELECHARGEMENT:
-            return Response(
-                {"error": "Votre rôle ne permet pas de télécharger ce document."},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        if role == 'student':
-            # Un étudiant ne télécharge que les documents de son propre dossier.
-            try:
-                owns_document = (
-                    doc.folder.student.student_account.user_id == request.user.pk
-                )
-            except AttributeError:
-                owns_document = False
-            if not owns_document:
-                return Response(
-                    {"error": "Vous n'êtes pas autorisé à consulter ce document."},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-        elif role == 'supervisor' and not FolderSupervisor.objects.filter(
-            user=request.user,
-            folder=doc.folder,
-        ).exists():
-            # Un encadreur ne télécharge que les dossiers qui lui sont affectés.
-            return Response(
-                {"error": "Ce dossier ne vous a pas été affecté."},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        # Règle unique, appliquée à chaque version (anciennes comprises) :
+        # rôle, périmètre, confidentialité et habilitations (STA04, STA08).
+        autorise, motif = decision_acces(request.user, doc.folder)
+        # Chaque tentative est tracée pour l'audit, sans le contenu du fichier.
+        journaliser_acces(request.user, doc, autorise, motif)
+        if not autorise:
+            return Response({"error": motif}, status=status.HTTP_403_FORBIDDEN)
 
         # Le stockage Render gratuit est éphémère : le fichier peut avoir
         # disparu après un redéploiement alors que la ligne existe encore.

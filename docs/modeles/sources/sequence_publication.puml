@@ -1,0 +1,31 @@
+@startuml sequence_publication
+actor "Planificateur" as P
+participant "Application Flutter" as UI
+participant "API Django" as API
+participant "Service publication" as S
+database "PostgreSQL" as DB
+P -> UI : Publier le planning
+UI -> API : POST /api/soutenances/publier/\nIdempotency-Key: K
+API -> DB : clé K déjà connue ?
+alt clé connue, même contenu
+  API --> UI : 201 (réponse rejouée)
+else nouvelle clé
+  API -> S : publier()
+  S -> DB : BEGIN ; pg_advisory_xact_lock
+  S -> DB : soutenances confirmées (SELECT … FOR UPDATE)
+  loop chaque soutenance
+    S -> S : recevable ? jury complet ?\nconflits EXG01 ? indisponibilités ?
+  end
+  alt au moins un problème
+    S -> DB : ROLLBACK (rien n'est écrit)
+    API --> UI : 409 {code, regle: F05, details.problemes}
+  else tout est conforme
+    S -> DB : INSERT VersionPlanning n+1
+    S -> DB : INSERT convocations ; anciennes → « remplacee »
+    S -> DB : soutenances → « publie » ; clé K mémorisée
+    S -> DB : COMMIT
+    API --> UI : 201 {numero, nombre_soutenances}
+  end
+end
+note over S, DB : Un arrêt du serveur avant COMMIT annule\ntout : aucune publication partielle.
+@enduml

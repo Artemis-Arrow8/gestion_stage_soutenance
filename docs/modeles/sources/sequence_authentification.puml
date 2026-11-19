@@ -1,0 +1,40 @@
+@startuml sequence_authentification
+autonumber
+actor Utilisateur
+participant "LoginScreen" as UI
+participant "AuthProvider" as AP
+participant "ApiService" as API
+participant "API Django" as DJ
+database PostgreSQL as DB
+
+Utilisateur -> UI : saisit identifiant + mot de passe
+UI -> AP : login(identifiant, mot de passe)
+AP -> API : POST /api/login/
+API -> DJ : requête HTTPS (JSON)
+DJ -> DB : lecture du compte et de ses rôles
+DB --> DJ : compte
+alt identifiants incorrects
+  DJ --> API : 401 { error }
+  API --> AP : ApiException
+  AP --> UI : message d'erreur
+else compte sans rôle SGSUS
+  DJ --> API : 403 { error }
+  API --> AP : ApiException
+  AP --> UI : message d'erreur
+else succès
+  DJ --> API : 200 { access, refresh, user }
+  API --> AP : réponse
+  AP -> AP : enregistrer les jetons\n(stockage sécurisé)
+  AP --> UI : session ouverte → tableau de bord
+end
+
+== Plus tard : jeton d'accès expiré ==
+AP -> API : GET /api/soutenances/planning/
+API -> DJ : Authorization: Bearer <access expiré>
+DJ --> API : 401
+API -> AP : refreshAccessToken()
+AP -> DJ : POST /api/token/refresh/ { refresh }
+DJ --> AP : 200 { access, refresh }
+API -> DJ : requête rejouée avec le nouveau jeton
+DJ --> API : 200 { soutenances }
+@enduml

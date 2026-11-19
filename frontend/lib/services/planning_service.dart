@@ -61,19 +61,90 @@ class PlanningService {
       'room_name': roomName,
       'slot_start': start.toUtc().toIso8601String(),
       'slot_end': end.toUtc().toIso8601String(),
-      'status': 'planifie',
     });
     return ApiService.requireObject(data);
   }
 
-  /// Change le statut de la soutenance [id] (`planifie`, `confirme`,
-  /// `termine` ou `annule`) sans modifier son créneau.
-  Future<void> updateDefenseStatus(int id, String status) async {
-    await api.patch('soutenances/$id/', {'status': status});
+  // -------------------------------------------------------------------
+  // Cycle de vie (F04, F05) : le statut ne se modifie jamais directement.
+  // -------------------------------------------------------------------
+
+  /// Confirme une soutenance proposée (dossier recevable, jury complet).
+  Future<void> confirmer(int id) => api.post('soutenances/$id/confirmer/', null);
+
+  /// Annule une soutenance : salle et jury libérés, convocations annulées.
+  Future<void> annuler(int id, {String motif = ''}) =>
+      api.post('soutenances/$id/annuler/', {'motif': motif});
+
+  /// Enregistre qu'une soutenance publiée a bien eu lieu.
+  Future<void> marquerTenue(int id) => api.post('soutenances/$id/tenue/', null);
+
+  /// Publie toutes les soutenances confirmées dans une nouvelle version du
+  /// planning et produit les convocations. [cle] : clé d'idempotence de
+  /// l'action (réutilisée si l'utilisateur relance après une coupure).
+  Future<Map<String, dynamic>> publier({String commentaire = '', required String cle}) async {
+    final data = await api.post(
+      'soutenances/publier/',
+      {'commentaire': commentaire},
+      idempotencyKey: cle,
+    );
+    return ApiService.requireObject(data);
   }
 
-  /// Supprime définitivement la soutenance [id].
+  /// Reporte une soutenance publiée ([debut]/[fin] locaux) avec un motif :
+  /// une nouvelle version du planning est publiée et les anciennes
+  /// convocations sont marquées « remplacées ».
+  Future<Map<String, dynamic>> reporter(
+    int id, {
+    required DateTime debut,
+    required DateTime fin,
+    required String motif,
+    String? salle,
+    required String cle,
+  }) async {
+    final data = await api.post(
+      'soutenances/$id/reporter/',
+      {
+        'slot_start': debut.toUtc().toIso8601String(),
+        'slot_end': fin.toUtc().toIso8601String(),
+        'motif': motif,
+        if (salle != null) 'room_name': salle,
+      },
+      idempotencyKey: cle,
+    );
+    return ApiService.requireObject(data);
+  }
+
+  /// Supprime une soutenance non publiée (une soutenance publiée s'annule).
   Future<void> deleteDefense(int id) => api.delete('soutenances/$id/');
+
+  /// Versions publiées du planning (la plus récente en premier).
+  Future<List<Map<String, dynamic>>> versions() => api.getList('versions-planning/');
+
+  /// Convocations visibles (les siennes ; toutes pour le personnel).
+  Future<List<Map<String, dynamic>>> convocations({int? soutenance}) => api.getList(
+    'convocations/',
+    query: soutenance == null ? null : {'soutenance': '$soutenance'},
+  );
+
+  // -------------------------------------------------------------------
+  // Indisponibilités récurrentes (complément F04, personnel)
+  // -------------------------------------------------------------------
+
+  /// Indisponibilités d'une [ressource] (nom du membre ou de la salle).
+  Future<List<Map<String, dynamic>>> indisponibilites({String? ressource}) => api.getList(
+    'indisponibilites/',
+    query: ressource == null ? null : {'ressource': ressource},
+  );
+
+  /// Crée une indisponibilité hebdomadaire ; la réponse contient `alertes`
+  /// (soutenances déjà publiées concernées, jamais déplacées automatiquement).
+  Future<Map<String, dynamic>> creerIndisponibilite(Map<String, dynamic> regle) async {
+    return ApiService.requireObject(await api.post('indisponibilites/', regle));
+  }
+
+  /// Supprime une indisponibilité.
+  Future<void> supprimerIndisponibilite(int id) => api.delete('indisponibilites/$id/');
 
   // -------------------------------------------------------------------
   // Catalogue des salles (CRUD, réservé au personnel)

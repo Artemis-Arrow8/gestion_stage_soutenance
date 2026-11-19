@@ -17,6 +17,27 @@ class AdministrationService {
   final ApiService api;
 
   /// Liste les campagnes académiques.
+  /// Importe des étudiants dans la campagne [campagne] à partir d'un texte
+  /// CSV (colonnes matricule, nom, email ; séparateur « ; » ou « , »).
+  ///
+  /// Avec [simulation], rien n'est enregistré : le rapport sert d'aperçu.
+  /// Un second import du même fichier ne crée ni étudiant ni dossier en
+  /// double (F01). Rapport : etudiants_crees, etudiants_existants,
+  /// dossiers_crees, dossiers_existants, erreurs [{ligne, erreur}].
+  Future<Map<String, dynamic>> importerEtudiants({
+    required int campagne,
+    required String csv,
+    required bool simulation,
+    String? cle,
+  }) async {
+    final data = await api.post(
+      'students/importer/',
+      {'campagne': campagne, 'csv': csv, 'simulation': simulation},
+      idempotencyKey: cle,
+    );
+    return ApiService.requireObject(data);
+  }
+
   Future<List<CampaignRecord>> loadCampaigns() async {
     return (await api.getList('campaigns/'))
         .map(CampaignRecord.fromJson)

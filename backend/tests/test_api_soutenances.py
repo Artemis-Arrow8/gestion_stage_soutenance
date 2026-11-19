@@ -12,21 +12,21 @@ Chaque erreur métier doit renvoyer HTTP 400 avec un message exploitable par
 Flutter (structure par champ ou {"detail": ...}).
 """
 
-from io import BytesIO
 from datetime import datetime
+from io import BytesIO
 from unittest.mock import patch
 
+from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db.backends.postgresql.psycopg_any import DateTimeTZRange
 from django.urls import reverse
 from django.utils import timezone
-from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from api.models import (
     Campaign,
-    DocumentVersion,
     Defense,
+    DocumentVersion,
     InternshipFolder,
     Jury,
     JuryMember,
@@ -232,35 +232,46 @@ class SoutenanceApiTests(DonneesApi):
             reponse.data["slot_end"],
         )
 
-    def test_conflit_meme_salle_meme_horaire_400(self):
+    def test_conflit_meme_salle_meme_horaire_409(self):
         # Scénario de démonstration : 2e soutenance, même salle, même horaire.
         premiere = self.creer_soutenance()
         self.assertEqual(premiere.status_code, 201, premiere.data)
         conflit = self.creer_soutenance(jury=self.jury2)
-        self.assertEqual(conflit.status_code, 400)
-        self.assertIn("EXG01", str(conflit.data))
+        # Contrat d'API (docs/api.md) : conflit métier = 409 + enveloppe.
+        self.assertEqual(conflit.status_code, 409)
+        self.assertEqual(conflit.data["code"], "BUSINESS_CONFLICT")
+        self.assertEqual(conflit.data["regle"], "EXG01")
+        self.assertIn("EXG01", conflit.data["message"])
+        self.assertEqual(conflit.data["request_id"], conflit["X-Request-ID"])
 
-    def test_conflit_meme_jury_autre_salle_400(self):
+    def test_conflit_meme_jury_autre_salle_409(self):
         premiere = self.creer_soutenance()
         self.assertEqual(premiere.status_code, 201, premiere.data)
         conflit = self.creer_soutenance(salle=self.salle_b.name)
-        self.assertEqual(conflit.status_code, 400)
+        self.assertEqual(conflit.status_code, 409)
+        self.assertEqual(conflit.data["details"]["champ"], "jury")
 
     def test_horaires_inverses_400(self):
         reponse = self.creer_soutenance(heure_debut=10, heure_fin=8)
         self.assertEqual(reponse.status_code, 400)
 
-    def test_dossier_non_recevable_400(self):
+    def test_dossier_non_recevable_409(self):
+        # Un étudiant n'a qu'un dossier par campagne : autre étudiant fictif.
+        autre = Student.objects.create(
+            student_number="2026-099", full_name="Étudiant Brouillon",
+            email="brouillon@etu-test.edu",
+        )
         dossier_brouillon = InternshipFolder.objects.create(
-            student=self.etudiant,
+            student=autre,
             campaign=self.campagne,
             company_name="Orange Mali",
             subject="App mobile",
             status="brouillon",
         )
         reponse = self.creer_soutenance(dossier=dossier_brouillon.pk)
-        self.assertEqual(reponse.status_code, 400)
-        self.assertIn("folder", str(reponse.data))
+        self.assertEqual(reponse.status_code, 409)
+        self.assertEqual(reponse.data["regle"], "F03")
+        self.assertEqual(reponse.data["details"]["champ"], "folder")
 
     def test_salle_inexistante_400(self):
         reponse = self.creer_soutenance(salle="Salle Fantôme")
@@ -297,8 +308,8 @@ class SoutenanceApiTests(DonneesApi):
             {"room_name": self.salle_a.name, "slot_start": debut, "slot_end": fin},
             format="json",
         )
-        self.assertEqual(reponse.status_code, 400)
-        self.assertIn("EXG01", str(reponse.data))
+        self.assertEqual(reponse.status_code, 409)
+        self.assertEqual(reponse.data["regle"], "EXG01")
 
     def test_patch_apres_conflit_on_peut_choisir_autre_salle(self):
         # Suite du scénario de démo : refus puis choix d'un autre créneau/salle.

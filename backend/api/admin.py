@@ -7,7 +7,11 @@ consulter et corriger les données sans passer par pgAdmin :
     * suivi : dossiers de stage, versions de documents, avis ;
     * planification : soutenances et évaluations ;
     * liaisons de comptes : compte ↔ étudiant, compte ↔ membre de jury,
-      encadreur ↔ dossier.
+      encadreur ↔ dossier ;
+    * socle ALM : grilles, indisponibilités, confidentialité, habilitations,
+      et, en LECTURE SEULE, les traces validées (historique des dossiers,
+      procès-verbaux, versions du planning, convocations, journal d'accès) :
+      une trace ne se corrige jamais à la main (chapitre 20).
 Les comptes et groupes (rôles) sont gérés par la section « Authentification
 et autorisation » fournie par Django.
 """
@@ -17,17 +21,27 @@ from django.contrib import admin
 from .models import (
     Assessment,
     Campaign,
+    ConfidentialiteDossier,
+    Convocation,
     Defense,
     DocumentVersion,
+    ExceptionIndisponibilite,
     FolderSupervisor,
+    GrilleEvaluation,
+    HabilitationDossier,
+    HistoriqueDossier,
+    Indisponibilite,
     InternshipFolder,
+    JournalAccesDocument,
     Jury,
     JuryMember,
     JuryMemberAccount,
+    ProcesVerbal,
     Review,
     Room,
     Student,
     StudentAccount,
+    VersionPlanning,
 )
 
 # Titres affichés dans l'interface d'administration.
@@ -231,3 +245,109 @@ class FolderSupervisorAdmin(admin.ModelAdmin):
         'folder__company_name',
     )
     list_select_related = ('user', 'folder', 'folder__student')
+
+
+# =========================================================================
+# 5. Socle ALM : paramètres modifiables
+# =========================================================================
+@admin.register(GrilleEvaluation)
+class GrilleEvaluationAdmin(admin.ModelAdmin):
+    """Grilles de notation versionnées (une nouvelle version par changement)."""
+
+    list_display = ('campagne', 'version', 'poids_rapport', 'poids_oral', 'note_maximale')
+    list_filter = ('campagne',)
+
+
+class ExceptionIndisponibiliteInline(admin.TabularInline):
+    """Dates d'exception saisies avec leur règle."""
+
+    model = ExceptionIndisponibilite
+    extra = 0
+
+
+@admin.register(Indisponibilite)
+class IndisponibiliteAdmin(admin.ModelAdmin):
+    """Indisponibilités récurrentes des membres de jury et des salles."""
+
+    list_display = ('ressource', 'type_ressource', 'jour_semaine', 'heure_debut',
+                    'heure_fin', 'fuseau', 'valide_du', 'valide_au')
+    list_filter = ('type_ressource', 'jour_semaine')
+    search_fields = ('ressource',)
+    inlines = [ExceptionIndisponibiliteInline]
+
+
+@admin.register(ConfidentialiteDossier)
+class ConfidentialiteDossierAdmin(admin.ModelAdmin):
+    """Niveau de confidentialité et embargo des rapports par dossier."""
+
+    list_display = ('dossier', 'niveau', 'embargo_jusqu_au', 'diffusion_autorisee')
+    list_filter = ('niveau', 'diffusion_autorisee')
+
+
+@admin.register(HabilitationDossier)
+class HabilitationDossierAdmin(admin.ModelAdmin):
+    """Habilitations nominatives sur les dossiers confidentiels."""
+
+    list_display = ('beneficiaire', 'dossier', 'valide_du', 'valide_au', 'revoquee')
+    list_filter = ('revoquee',)
+    list_select_related = ('beneficiaire', 'dossier')
+
+
+# =========================================================================
+# 6. Socle ALM : traces validées, en lecture seule
+# =========================================================================
+class LectureSeuleAdmin(admin.ModelAdmin):
+    """Consultation seule : ni ajout, ni modification, ni suppression."""
+
+    def has_add_permission(self, request):
+        """Aucune création manuelle de trace."""
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        """Aucune modification d'une trace validée."""
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        """Aucune suppression d'une trace validée."""
+        return False
+
+
+@admin.register(HistoriqueDossier)
+class HistoriqueDossierAdmin(LectureSeuleAdmin):
+    """Transitions des dossiers (preuves conservées)."""
+
+    list_display = ('dossier', 'evenement', 'statut_avant', 'statut_apres', 'acteur', 'created_at')
+    list_filter = ('evenement',)
+
+
+@admin.register(ProcesVerbal)
+class ProcesVerbalAdmin(LectureSeuleAdmin):
+    """Versions des procès-verbaux de soutenance."""
+
+    list_display = ('evaluation', 'version', 'statut', 'moyenne', 'approuve_par', 'created_at')
+    list_filter = ('statut',)
+
+
+@admin.register(VersionPlanning)
+class VersionPlanningAdmin(LectureSeuleAdmin):
+    """Versions publiées du planning."""
+
+    list_display = ('numero', 'publiee_le', 'publiee_par', 'nombre_soutenances')
+
+
+@admin.register(Convocation)
+class ConvocationAdmin(LectureSeuleAdmin):
+    """Convocations produites par les publications."""
+
+    list_display = ('destinataire', 'role_destinataire', 'soutenance', 'version',
+                    'statut', 'notification', 'debut')
+    list_filter = ('statut', 'notification', 'role_destinataire')
+    search_fields = ('destinataire',)
+
+
+@admin.register(JournalAccesDocument)
+class JournalAccesDocumentAdmin(LectureSeuleAdmin):
+    """Journal d'audit des accès aux rapports."""
+
+    list_display = ('version_document_id', 'utilisateur', 'action', 'autorise', 'motif', 'created_at')
+    list_filter = ('autorise', 'action')

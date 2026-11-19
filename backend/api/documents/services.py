@@ -14,16 +14,18 @@ from django.db import transaction
 
 from api.documents.validators import validate_pdf_file
 from api.models import DocumentVersion, InternshipFolder
+from api.services.dossiers import apres_nouvelle_version
 
 
 @transaction.atomic
-def upload_document(folder_id, uploaded_file):
+def upload_document(folder_id, uploaded_file, acteur=None):
     """
     Dépose une nouvelle version de document dans un dossier de stage.
 
     Paramètres :
         folder_id (int) : identifiant du dossier de stage cible.
         uploaded_file (UploadedFile) : fichier PDF reçu.
+        acteur (User | None) : auteur du dépôt, tracé dans l'historique.
 
     Retour :
         DocumentVersion : la version créée (numéro = dernière version + 1).
@@ -83,4 +85,7 @@ def upload_document(folder_id, uploaded_file):
         default_storage.delete(saved_path)
         raise
 
+    # Même transaction : un dossier validé ou recevable repasse à « soumis »
+    # pour que la nouvelle pièce soit réexaminée (STA05, chapitre 4).
+    apres_nouvelle_version(folder, document, acteur)
     return document

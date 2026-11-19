@@ -1,0 +1,37 @@
+@startuml activite_parcours
+|Étudiant|
+start
+:Créer son dossier de stage
+(entreprise, sujet) — statut « brouillon »;
+:Déposer une version du rapport PDF;
+|Encadreur|
+:Consulter le rapport;
+:Donner un avis;
+if (Avis favorable ?) then (non)
+  |Étudiant|
+  :Corriger et déposer une nouvelle version;
+  note right: retour à l'avis de l'encadreur
+  detach
+else (oui)
+endif
+|Responsable pédagogique|
+:Déclarer le dossier « recevable »;
+:Planifier la soutenance
+(jury, salle, créneau);
+if (Conflit de salle ou de jury ? (EXG01)) then (oui)
+  :Choisir un autre créneau ou une autre salle;
+  detach
+else (non)
+endif
+:Confirmer la soutenance;
+|Membre du jury|
+:Consulter son planning;
+:Participer à la soutenance;
+|Responsable pédagogique|
+:Marquer la soutenance « terminée »;
+:Saisir les notes (rapport, oral);
+:Valider la note;
+|Étudiant|
+:Consulter sa note finale dans son profil;
+stop
+@enduml

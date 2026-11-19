@@ -94,3 +94,23 @@ def creer_defense(dossier, jury, salle, slot, statut="planifie"):
         slot_range=slot,
         status=statut,
     )
+
+
+def creer_compte(role, nom=None):
+    """Compte de connexion rattaché au groupe du rôle (admin, responsible…)."""
+    from django.contrib.auth.models import Group, User
+
+    n = next(_compteur)
+    compte = User.objects.create_user(username=nom or f"{role}{n}", password="x-test-1234")
+    groupe, _ = Group.objects.get_or_create(name=role)
+    compte.groups.add(groupe)
+    return compte
+
+
+def affecter_encadreur(dossier, compte=None):
+    """Affecte un encadreur (créé si besoin) au dossier et le retourne."""
+    from api.models import FolderSupervisor
+
+    compte = compte or creer_compte("supervisor")
+    FolderSupervisor.objects.get_or_create(user=compte, folder=dossier)
+    return compte

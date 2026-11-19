@@ -1,12 +1,14 @@
-from datetime import datetime, timezone as datetime_timezone
+from datetime import datetime
+from datetime import timezone as datetime_timezone
 
-from rest_framework.test import APITestCase
-from rest_framework import status
-from django.urls import reverse
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.db import IntegrityError, transaction
+from django.urls import reverse
+from rest_framework import status
+from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
+
 from api.models import (
     Assessment,
     Campaign,
@@ -24,7 +26,7 @@ User = get_user_model()
 
 class SGSUSFeaturesTestCase(APITestCase):
     """
-    Suite de tests pour valider les endpoints CRUD des Campagnes, 
+    Suite de tests pour valider les endpoints CRUD des Campagnes,
     des Étudiants et des Dossiers de stage avec gestion des permissions.
     """
 
@@ -37,7 +39,7 @@ class SGSUSFeaturesTestCase(APITestCase):
             academic_year="2025-2026",
             is_active=True
         )
-        
+
         # 2. Données de référence : Étudiant
         self.student = Student.objects.create(
             student_number="ETU98765",
@@ -57,7 +59,7 @@ class SGSUSFeaturesTestCase(APITestCase):
         )
         Room.objects.create(name="Salle A", capacity=30)
         Room.objects.create(name="Salle B", capacity=30)
-        
+
         # 3. Dossier de stage lié
         self.folder = InternshipFolder.objects.create(
             student=self.student,
@@ -111,10 +113,13 @@ class SGSUSFeaturesTestCase(APITestCase):
         """Vérifie la création d'un dossier de stage par un étudiant (nécessite la permission IsStudent)."""
         # Authentification en tant qu'étudiant car InternshipFolderViewSet requiert IsStudent
         self.client.force_authenticate(user=self.student_user)
-        
+        # Un étudiant n'a qu'un dossier par campagne (F01) : il a déjà
+        # celui de self.campaign, on crée donc celui d'une autre campagne.
+        autre_campagne = Campaign.objects.create(academic_year="2027-2028", is_active=True)
+
         payload = {
             "student": self.student.id,
-            "campaign": self.campaign.id,  
+            "campaign": autre_campagne.id,
             "company_name": "Orange Mali",
             "subject": "Mise en place d'un système de suivi",
             "status": "brouillon"
@@ -130,12 +135,13 @@ class SGSUSFeaturesTestCase(APITestCase):
             email="autre.etudiant@itma.ml",
         )
         self.client.force_authenticate(user=self.student_user)
+        autre_campagne = Campaign.objects.create(academic_year="2027-2028", is_active=True)
 
         response = self.client.post(
             self.folder_url,
             {
                 "student": other_student.id,
-                "campaign": self.campaign.id,
+                "campaign": autre_campagne.id,
                 "company_name": "Entreprise",
                 "subject": "Sujet de stage",
                 "status": "brouillon",
@@ -255,8 +261,9 @@ class SGSUSFeaturesTestCase(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("room_name", response.data)
+        # Conflit métier EXG01 : 409, champ identifié dans les détails.
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data["details"]["champ"], "room_name")
 
     def test_defense_accepts_adjacent_room_bookings(self):
         Defense.objects.create(
@@ -313,8 +320,8 @@ class SGSUSFeaturesTestCase(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("jury", response.data)
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data["details"]["champ"], "jury")
 
     def test_database_rejects_overlapping_room_booking(self):
         Defense.objects.create(

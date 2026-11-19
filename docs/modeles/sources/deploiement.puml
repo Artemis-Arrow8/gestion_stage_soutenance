@@ -1,0 +1,35 @@
+@startuml deploiement
+node "Poste utilisateur" {
+  node "Navigateur web" as NAV {
+    artifact "Application Flutter Web" as APP
+  }
+}
+
+cloud "Render" {
+  node "Static Site\ngestion-stage-soutenance-frontend" as SS {
+    artifact "build/web\n(HTML, JS, polices)" as WEB
+  }
+  node "Web Service (Docker)\ngestion-stage-soutenance" as WS {
+    node "Conteneur python:3.13" {
+      artifact "entrypoint.sh" as EP
+      component "Gunicorn" as GU
+      component "Django + DRF\n+ WhiteNoise" as DJ
+    }
+  }
+  database "PostgreSQL 17" as PG
+}
+
+node "GitHub" as GH {
+  artifact "Dépôt du code" as REPO
+  component "GitHub Actions (CI)" as CI
+}
+
+NAV --> SS : HTTPS (chargement de l'application)
+APP --> WS : HTTPS / JSON + JWT (/api/)
+EP --> GU : lance après migrate\net collectstatic
+GU --> DJ
+DJ --> PG : TCP 5432 / TLS
+REPO --> CI : à chaque push
+REPO --> SS : déploiement automatique
+REPO --> WS : déploiement automatique
+@enduml

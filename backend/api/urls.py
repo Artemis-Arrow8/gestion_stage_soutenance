@@ -17,8 +17,11 @@ from .views import (
     AssessmentViewSet,
     CampaignViewSet,
     ChangePasswordView,
+    ConvocationViewSet,
     DefenseViewSet,
     DocumentVersionViewSet,
+    HabilitationDossierViewSet,
+    IndisponibiliteViewSet,
     InternshipFolderViewSet,
     JuryMemberViewSet,
     JuryViewSet,
@@ -29,6 +32,7 @@ from .views import (
     StudentViewSet,
     UserAccountViewSet,
     UserProfileView,
+    VersionPlanningViewSet,
 )
 
 # Routeur principal DRF : il expose aussi une page d'index navigable sur /api/.
@@ -51,6 +55,12 @@ router.register(r'jury-members', JuryMemberViewSet, basename='jury-member')
 router.register(r'membres-jury', JuryMemberViewSet, basename='membre-jury')
 router.register(r'defenses', DefenseViewSet, basename='defense')
 router.register(r'soutenances', DefenseViewSet, basename='soutenance')
+# Socle du dossier ALM : indisponibilités, planning publié, convocations,
+# habilitations sur les dossiers confidentiels.
+router.register(r'indisponibilites', IndisponibiliteViewSet, basename='indisponibilite')
+router.register(r'versions-planning', VersionPlanningViewSet, basename='version-planning')
+router.register(r'convocations', ConvocationViewSet, basename='convocation')
+router.register(r'habilitations', HabilitationDossierViewSet, basename='habilitation')
 
 urlpatterns = [
     # Toutes les routes générées par le routeur DRF.

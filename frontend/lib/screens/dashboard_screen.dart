@@ -1,11 +1,12 @@
 /// Tableau de bord : page d'accueil de l'espace connecté.
 ///
-/// Son contenu s'adapte au rôle :
-/// * administrateur / responsable : indicateurs, prochaines soutenances,
-///   charge de la semaine et accès rapides ;
-/// * membre du jury : ses prochaines soutenances et la charge de la semaine ;
-/// * étudiant : état de son dossier et accès à ses documents ;
-/// * encadreur : accès aux dossiers qui lui sont affectés.
+/// Conception volontairement simple, identique pour tous les profils :
+///   1. une carte « À la une » avec l'information la plus utile du moment
+///      (prochaine soutenance, état du dossier…), qui s'ouvre au toucher ;
+///   2. une grille de grandes cartes « Vos espaces » : une carte par module,
+///      avec une information en direct ; toucher la carte ouvre le module.
+/// Pas de tableaux ni de listes entassées : le détail se trouve dans chaque
+/// module. Les cartes sont larges pour un usage confortable à une main.
 library;
 
 import 'package:material_ui/material_ui.dart';
@@ -19,7 +20,6 @@ import '../providers/planning_store.dart';
 import '../services/conflict_report.dart';
 import '../services/planning_service.dart';
 import '../widgets/app_shell.dart';
-import '../widgets/defense_tile.dart';
 import '../widgets/ui_kit.dart';
 import 'defense_detail_screen.dart';
 import 'defense_form_screen.dart';
@@ -51,7 +51,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   /// Charge (ou recharge si [force]) le planning partagé.
   Future<void> _load({required bool force}) async {
     final auth = context.read<AuthProvider>();
-    if (!_voitPlanning(auth)) return;
+    // Le profil (dossier, soutenance de l'étudiant) est aussi rafraîchi.
+    if (force) await auth.fetchUserProfile();
+    if (!mounted || !_voitPlanning(auth)) return;
     final service = PlanningService(auth.api);
     if (force) {
       try {
@@ -67,165 +69,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
-    final role = auth.role;
     // Prénom seul pour une salutation plus naturelle.
     final prenom = auth.displayName.split(' ').first;
-    final today = DateTime.now();
 
     return SgPage(
       section: AppSection.dashboard,
       title: 'Bonjour, $prenom',
       subtitle:
-          '${Session.roleLabel(role)} · année universitaire ${anneeScolaire(today)}',
-      onRefresh: _voitPlanning(auth) ? () => _load(force: true) : null,
-      actions: [
-        if (auth.canManage)
-          SgButton(
-            'Nouvelle soutenance',
-            icon: Icons.add_rounded,
-            onPressed: () => pushPage(context, const DefenseFormScreen()),
-          ),
-        if (_voitPlanning(auth))
-          SgButton(
-            role == 'jury' ? 'Mon planning' : 'Planning',
-            icon: Icons.calendar_month_outlined,
-            variant: SgBtnVariant.outline,
-            onPressed: () => navigateToSection(context, AppSection.planning),
-          ),
-      ],
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _Banner(role: role),
-          const SizedBox(height: 24),
-          if (_voitPlanning(auth))
-            _PlanningOverview(canManage: auth.canManage)
-          else if (role == 'student')
-            _StudentFolderCard(profile: auth.user ?? const {}),
-          if (role == 'student') const SizedBox(height: 24),
-          const SgSectionTitle(
-            'Accès rapides',
-            subtitle: 'Les modules disponibles pour votre profil.',
-          ),
-          const SizedBox(height: 12),
-          _QuickActions(role: role),
-          const SizedBox(height: 36),
-          Center(
-            child: Text(
-              'SGSUS — Gestion des stages et des soutenances · © ${today.year}',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 11.5, color: AppColors.greyLight),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ===========================================================================
-// Bandeau d'accueil
-// ===========================================================================
-
-/// Bandeau sombre d'introduction, au message adapté au rôle.
-class _Banner extends StatelessWidget {
-  const _Banner({required this.role});
-
-  /// Rôle de l'utilisateur connecté.
-  final String? role;
-
-  @override
-  Widget build(BuildContext context) {
-    final (surtitre, titre, texte) = switch (role) {
-      'admin' || 'responsible' => (
-        'ESPACE DE PLANIFICATION',
-        'Organisez vos soutenances avec précision.',
-        'Horaires, salles, jurys et documents réunis dans un seul espace.',
-      ),
-      'jury' => (
-        'ESPACE JURY',
-        'Retrouvez les soutenances qui vous attendent.',
-        'Consultez les créneaux, les salles et les sujets de vos soutenances.',
-      ),
-      'supervisor' => (
-        'ESPACE ENCADREUR',
-        'Suivez les dossiers de vos étudiants.',
-        'Consultez les rapports déposés et rendez vos avis de recevabilité.',
-      ),
-      _ => (
-        'ESPACE ÉTUDIANT',
-        'Votre stage, étape par étape.',
-        'Déposez vos rapports et suivez l’avancement de votre dossier.',
-      ),
-    };
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(26),
-      decoration: BoxDecoration(
-        gradient: AppTheme.inkGradient,
-        borderRadius: BorderRadius.circular(AppTheme.radius + 4),
-      ),
-      child: LayoutBuilder(
-        builder: (context, c) => Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          '${Session.roleLabel(auth.role)} · année universitaire '
+          '${anneeScolaire(DateTime.now())}',
+      maxWidth: 1100,
+      onRefresh: () => _load(force: true),
+      // Les trois états partagés du planning pilotent l'affichage.
+      child: ValueListenableBuilder<bool>(
+        valueListenable: PlanningStore.loading,
+        builder: (context, loading, _) => ValueListenableBuilder<String?>(
+          valueListenable: PlanningStore.error,
+          builder: (context, error, _) => ValueListenableBuilder<List<Defense>>(
+            valueListenable: PlanningStore.defenses,
+            builder: (context, defenses, _) {
+              final etat = _EtatAccueil(
+                auth: auth,
+                defenses: defenses,
+                loading: loading,
+              );
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    surtitre,
-                    style: const TextStyle(
-                      color: AppColors.gold,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.8,
+                  if (error != null && _voitPlanning(auth)) ...[
+                    SgBanner(
+                      message: 'Le planning n’a pas pu être chargé : $error',
+                      tone: SgTone.danger,
                     ),
+                    const SizedBox(height: 16),
+                  ],
+                  _CarteUne(etat: etat),
+                  const SizedBox(height: 28),
+                  const SgSectionTitle(
+                    'Vos espaces',
+                    subtitle: 'Touchez une carte pour ouvrir le module.',
                   ),
-                  const SizedBox(height: 12),
-                  Text(
-                    titre,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 21,
-                      height: 1.3,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.4,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    texte,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.7),
-                      fontSize: 13,
-                      height: 1.55,
-                    ),
-                  ),
+                  const SizedBox(height: 14),
+                  _GrilleEspaces(etat: etat),
                 ],
-              ),
-            ),
-            // Illustration masquée sur les écrans étroits.
-            if (c.maxWidth > 520) ...[
-              const SizedBox(width: 20),
-              Container(
-                width: 68,
-                height: 68,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.1),
-                  ),
-                ),
-                child: const Icon(
-                  Icons.school_rounded,
-                  color: AppColors.gold,
-                  size: 32,
-                ),
-              ),
-            ],
-          ],
+              );
+            },
+          ),
         ),
       ),
     );
@@ -233,472 +122,390 @@ class _Banner extends StatelessWidget {
 }
 
 // ===========================================================================
-// Vue d'ensemble du planning (personnel et jury)
+// Données calculées pour l'accueil
 // ===========================================================================
 
-/// Indicateurs, prochaines soutenances et charge de la semaine.
-class _PlanningOverview extends StatelessWidget {
-  const _PlanningOverview({required this.canManage});
-
-  /// Vrai pour le personnel (indicateurs complets et création).
-  final bool canManage;
-
-  @override
-  Widget build(BuildContext context) {
-    // Trois sources observées : données, chargement et erreur.
-    return ValueListenableBuilder<bool>(
-      valueListenable: PlanningStore.loading,
-      builder: (context, loading, _) => ValueListenableBuilder<String?>(
-        valueListenable: PlanningStore.error,
-        builder: (context, error, _) => ValueListenableBuilder<List<Defense>>(
-          valueListenable: PlanningStore.defenses,
-          builder: (context, defenses, _) =>
-              _content(context, defenses, loading, error),
-        ),
-      ),
-    );
-  }
-
-  /// Construit la vue une fois les trois états connus.
-  Widget _content(
-    BuildContext context,
-    List<Defense> defenses,
-    bool loading,
-    String? error,
-  ) {
-    final today = DateTime.now();
-    final debutJour = DateTime(today.year, today.month, today.day);
-    // Soutenances à venir (aujourd'hui inclus), dans l'ordre chronologique.
-    final aVenir = defenses.where((d) {
-      final p = parseDefenseDate(d.date);
-      return p != null && !p.isBefore(debutJour);
-    }).toList()
-      ..sort(
-        (a, b) => '${a.date}${a.startTime}'.compareTo('${b.date}${b.startTime}'),
-      );
-    final aujourdhui = aVenir
-        .where((d) => parseDefenseDate(d.date) == debutJour)
-        .length;
-    final conflits = canManage ? ConflictScanner.scan(defenses).length : 0;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (error != null) ...[
-          SgBanner(
-            message: 'Le planning n’a pas pu être chargé : $error',
-            tone: SgTone.danger,
-          ),
-          const SizedBox(height: 18),
-        ],
-        // Indicateurs chiffrés.
-        _StatsGrid(
-          cards: [
-            SgStatCard(
-              label: canManage ? 'Soutenances planifiées' : 'Mes soutenances',
-              value: '${defenses.length}',
-              icon: Icons.event_available_rounded,
-              tone: SgTone.info,
-            ),
-            SgStatCard(
-              label: 'Aujourd’hui',
-              value: '$aujourdhui',
-              icon: Icons.today_rounded,
-              tone: SgTone.gold,
-              foot: aVenir.isEmpty ? null : '${aVenir.length} à venir',
-            ),
-            if (canManage) ...[
-              SgStatCard(
-                label: 'Salles actives',
-                value: '${PlanningStore.rooms.length}',
-                icon: Icons.meeting_room_rounded,
-                tone: SgTone.success,
-              ),
-              SgStatCard(
-                label: 'Conflits détectés',
-                value: '$conflits',
-                icon: Icons.report_gmailerrorred_rounded,
-                tone: conflits > 0 ? SgTone.danger : SgTone.success,
-                foot: conflits > 0 ? 'Action requise' : 'Planning sain',
-              ),
-            ],
-          ],
-        ),
-        const SizedBox(height: 28),
-        SgSectionTitle(
-          'Prochaines soutenances',
-          subtitle: 'Les échéances les plus proches du calendrier.',
-          action: SgButton(
-            'Tout voir',
-            variant: SgBtnVariant.ghost,
-            dense: true,
-            onPressed: () => navigateToSection(context, AppSection.planning),
-          ),
-        ),
-        const SizedBox(height: 12),
-        if (loading && defenses.isEmpty)
-          const SgLoading(message: 'Chargement du planning…')
-        else if (aVenir.isEmpty)
-          SgEmpty(
-            icon: Icons.event_available_outlined,
-            title: 'Aucune soutenance à venir',
-            message: canManage
-                ? 'Créez une première soutenance pour alimenter le planning.'
-                : 'Aucune soutenance ne vous est encore affectée.',
-            action: canManage
-                ? SgButton(
-                    'Créer une soutenance',
-                    icon: Icons.add_rounded,
-                    onPressed: () =>
-                        pushPage(context, const DefenseFormScreen()),
-                  )
-                : null,
-          )
-        else
-          Column(
-            children: [
-              for (final d in aVenir.take(4))
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: DefenseTile(
-                    defense: d,
-                    onTap: () =>
-                        pushPage(context, DefenseDetailScreen(defense: d)),
-                  ),
-                ),
-            ],
-          ),
-        const SizedBox(height: 28),
-        const SgSectionTitle(
-          'Charge de la semaine',
-          subtitle: 'Nombre de soutenances sur les 7 prochains jours.',
-        ),
-        const SizedBox(height: 12),
-        _WeekChart(defenses: defenses),
-        const SizedBox(height: 28),
-      ],
-    );
-  }
-}
-
-/// Grille adaptative d'indicateurs : 4, 2 ou 1 par ligne selon la largeur.
-class _StatsGrid extends StatelessWidget {
-  const _StatsGrid({required this.cards});
-
-  /// Cartes à disposer.
-  final List<Widget> cards;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, c) {
-        const gap = 14.0;
-        final perRow = c.maxWidth >= 980
-            ? cards.length.clamp(1, 4)
-            : (c.maxWidth >= 460 ? 2 : 1);
-        final width = (c.maxWidth - (perRow - 1) * gap) / perRow;
-        return Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: [
-            for (final card in cards) SizedBox(width: width, child: card),
-          ],
-        );
-      },
-    );
-  }
-}
-
-/// Histogramme des soutenances des 7 prochains jours.
-class _WeekChart extends StatelessWidget {
-  const _WeekChart({required this.defenses});
-
-  /// Soutenances à répartir par jour.
-  final List<Defense> defenses;
-
-  @override
-  Widget build(BuildContext context) {
-    final today = DateTime.now();
-    final jours = List.generate(7, (i) => today.add(Duration(days: i)));
-    // Nombre de soutenances par jour, calculé une seule fois.
-    final counts = [
-      for (final j in jours)
+/// Regroupe les informations affichées par l'accueil, calculées une fois.
+class _EtatAccueil {
+  _EtatAccueil({
+    required this.auth,
+    required List<Defense> defenses,
+    required this.loading,
+  }) {
+    final now = DateTime.now();
+    final debutJour = DateTime(now.year, now.month, now.day);
+    // Soutenances à venir (aujourd'hui inclus, hors annulées), triées.
+    aVenir =
         defenses.where((d) {
           final p = parseDefenseDate(d.date);
-          return p != null && sameDay(p, j);
-        }).length,
-    ];
-    // L'échelle s'adapte au jour le plus chargé (minimum 3).
-    final maxCount = counts.fold<int>(3, (m, c) => c > m ? c : m);
-
-    return SgCard(
-      child: LayoutBuilder(
-        builder: (context, c) {
-          final compact = c.maxWidth < 520;
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              for (var i = 0; i < jours.length; i++)
-                Expanded(
-                  child: Column(
-                    children: [
-                      _bar(counts[i], maxCount, isToday: i == 0, compact: compact),
-                      const SizedBox(height: 8),
-                      Text(
-                        compact
-                            ? joursCourts[jours[i].weekday - 1].substring(0, 1)
-                            : joursCourts[jours[i].weekday - 1],
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: i == 0 ? AppColors.ink : AppColors.grey,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${jours[i].day}',
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: AppColors.greyLight,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-          );
-        },
-      ),
-    );
+          return p != null && !p.isBefore(debutJour) && d.status != 'annule';
+        }).toList()..sort(
+          (a, b) =>
+              '${a.date}${a.startTime}'.compareTo('${b.date}${b.startTime}'),
+        );
+    aujourdhui = aVenir
+        .where((d) => parseDefenseDate(d.date) == debutJour)
+        .length;
+    conflits = auth.canManage ? ConflictScanner.scan(defenses).length : 0;
   }
 
-  /// Barre d'un jour : hauteur proportionnelle au nombre de soutenances.
-  Widget _bar(
-    int count,
-    int maxCount, {
-    required bool isToday,
-    required bool compact,
-  }) {
-    final height = 16.0 + (count / maxCount) * 64;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeOut,
-      height: height,
-      margin: EdgeInsets.symmetric(horizontal: compact ? 3 : 8),
-      decoration: BoxDecoration(
-        color: count == 0
-            ? AppColors.neutralBg
-            : (isToday ? AppColors.gold : AppColors.ink),
-        borderRadius: BorderRadius.circular(7),
-      ),
-      alignment: Alignment.center,
-      child: count == 0
-          ? null
-          : Text(
-              '$count',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: isToday ? AppColors.ink : Colors.white,
-              ),
-            ),
-    );
-  }
+  /// Session courante (rôle, profil).
+  final AuthProvider auth;
+
+  /// Vrai pendant le chargement du planning.
+  final bool loading;
+
+  /// Soutenances à venir, par ordre chronologique.
+  late final List<Defense> aVenir;
+
+  /// Nombre de soutenances du jour.
+  late final int aujourdhui;
+
+  /// Nombre de conflits détectés (personnel uniquement).
+  late final int conflits;
+
+  /// Rôle de l'utilisateur.
+  String? get role => auth.role;
 }
 
 // ===========================================================================
-// Carte « Mon dossier » (étudiant)
+// Carte « À la une »
 // ===========================================================================
 
-/// Résumé du dossier de stage de l'étudiant connecté.
-class _StudentFolderCard extends StatelessWidget {
-  const _StudentFolderCard({required this.profile});
+/// Grande carte noire et or : l'information la plus utile selon le rôle.
+class _CarteUne extends StatelessWidget {
+  const _CarteUne({required this.etat});
 
-  /// Profil renvoyé par l'API (`folder_status`, `folder_company`,
-  /// `defense`…).
-  final Map<String, dynamic> profile;
+  /// Données de l'accueil.
+  final _EtatAccueil etat;
 
   @override
   Widget build(BuildContext context) {
-    final statut = profile['folder_status']?.toString();
-    final soutenance = profile['defense'] is Map
-        ? Map<String, dynamic>.from(profile['defense'] as Map)
+    return switch (etat.role) {
+      'admin' || 'responsible' || 'jury' => _uneSoutenance(context),
+      'student' => _uneEtudiant(context),
+      _ => _uneEncadreur(context),
+    };
+  }
+
+  /// Personnel et jury : prochaine soutenance (ou invitation à planifier).
+  Widget _uneSoutenance(BuildContext context) {
+    final prochaine = etat.aVenir.isEmpty ? null : etat.aVenir.first;
+    final personnel = etat.auth.canManage;
+
+    if (prochaine == null) {
+      return _CadreUne(
+        surtitre: 'À LA UNE',
+        titre: etat.loading
+            ? 'Chargement du planning…'
+            : 'Aucune soutenance à venir',
+        texte: personnel
+            ? 'Planifiez une soutenance pour remplir le calendrier.'
+            : 'Aucune soutenance n’est encore affectée à votre jury.',
+        action: personnel
+            ? SgButton(
+                'Nouvelle soutenance',
+                icon: Icons.add_rounded,
+                onPressed: () => pushPage(context, const DefenseFormScreen()),
+              )
+            : null,
+      );
+    }
+
+    final date = parseDefenseDate(prochaine.date);
+    return _CadreUne(
+      surtitre: 'PROCHAINE SOUTENANCE',
+      titre: prochaine.studentName,
+      texte: prochaine.subject,
+      onTap: () => pushPage(context, DefenseDetailScreen(defense: prochaine)),
+      details: [
+        (Icons.event_rounded, date == null ? prochaine.date : longDate(date)),
+        (
+          Icons.schedule_rounded,
+          '${prochaine.startTime} – ${prochaine.endTime}',
+        ),
+        (Icons.meeting_room_outlined, prochaine.roomName),
+        (Icons.groups_2_outlined, prochaine.juryName),
+      ],
+      // Pastilles d'alerte : soutenances du jour et conflits à traiter.
+      pastilles: [
+        if (etat.aujourdhui > 0)
+          SgBadge('${etat.aujourdhui} aujourd’hui', tone: SgTone.gold),
+        if (etat.conflits > 0)
+          SgBadge('${etat.conflits} conflit(s)', tone: SgTone.danger),
+      ],
+    );
+  }
+
+  /// Étudiant : son dossier et sa soutenance (ou invitation à créer le dossier).
+  Widget _uneEtudiant(BuildContext context) {
+    final user = etat.auth.user ?? const <String, dynamic>{};
+    final statut = user['folder_status']?.toString();
+    final s = user['defense'] is Map
+        ? Map<String, dynamic>.from(user['defense'] as Map)
         : null;
 
-    return LayoutBuilder(
-      builder: (context, c) {
-        final dossier = _carteDossier(context, statut);
-        final carteSoutenance = _carteSoutenance(soutenance);
-        // Deux cartes côte à côte sur grand écran, empilées sinon.
-        if (c.maxWidth < 720) {
-          return Column(
-            children: [dossier, const SizedBox(height: 14), carteSoutenance],
-          );
-        }
-        return IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(child: dossier),
-              const SizedBox(width: 14),
-              Expanded(child: carteSoutenance),
-            ],
-          ),
-        );
-      },
-    );
-  }
+    if (statut == null) {
+      return _CadreUne(
+        surtitre: 'MON STAGE',
+        titre: 'Créez votre dossier de stage',
+        texte: 'Indiquez votre entreprise d’accueil et votre sujet pour commencer.',
+        action: SgButton(
+          'Créer mon dossier',
+          icon: Icons.create_new_folder_outlined,
+          onPressed: () => navigateToSection(context, AppSection.documents),
+        ),
+      );
+    }
 
-  /// Carte « Mon dossier de stage » (ou invitation à le créer).
-  Widget _carteDossier(BuildContext context, String? statut) {
-    return SgCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              _pastille(Icons.folder_shared_rounded),
-              const SizedBox(width: 14),
-              const Expanded(
-                child: Text(
-                  'Mon dossier de stage',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                ),
-              ),
-              if (statut != null) SgStatusBadge(statut),
-            ],
-          ),
-          const SizedBox(height: 14),
-          if (statut == null) ...[
-            const Text(
-              'Aucun dossier pour la campagne en cours.',
-              style: TextStyle(fontSize: 13, color: AppColors.grey),
-            ),
-            const SizedBox(height: 12),
-            SgButton(
-              'Créer mon dossier',
-              icon: Icons.create_new_folder_outlined,
-              dense: true,
-              onPressed: () => navigateToSection(context, AppSection.documents),
-            ),
-          ] else ...[
-            Text(
-              profile['folder_company']?.toString() ?? '',
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              profile['folder_subject']?.toString() ?? '',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12.5, color: AppColors.grey),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  /// Carte « Ma soutenance » : date, horaires, salle, jury, note validée.
-  Widget _carteSoutenance(Map<String, dynamic>? s) {
-    final debut = DateTime.tryParse(s?['slot_start']?.toString() ?? '')?.toLocal();
+    final debut = DateTime.tryParse(s?['slot_start']?.toString() ?? '')
+        ?.toLocal();
     final fin = DateTime.tryParse(s?['slot_end']?.toString() ?? '')?.toLocal();
     String heure(DateTime? d) => d == null
         ? '--:--'
         : '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
     final note = s?['final_average']?.toString();
 
-    return SgCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              _pastille(Icons.event_available_rounded),
-              const SizedBox(width: 14),
-              const Expanded(
-                child: Text(
-                  'Ma soutenance',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                ),
-              ),
-              if (s != null) SgStatusBadge(s['status']?.toString() ?? ''),
-            ],
+    return _CadreUne(
+      surtitre: 'MON STAGE',
+      titre: user['folder_company']?.toString() ?? 'Mon dossier',
+      texte: user['folder_subject']?.toString() ?? '',
+      onTap: () => navigateToSection(context, AppSection.profil),
+      pastilles: [
+        SgStatusBadge(statut),
+        if (note != null)
+          SgBadge(
+            'Note : ${note.replaceAll('.', ',')} / 20',
+            tone: SgTone.gold,
+            dot: false,
           ),
-          const SizedBox(height: 14),
-          if (s == null)
-            const Text(
-              'Pas encore planifiée : elle le sera dès que votre dossier '
-              'sera déclaré recevable.',
-              style: TextStyle(fontSize: 13, color: AppColors.grey),
-            )
-          else ...[
-            Text(
-              debut == null ? '—' : longDate(debut),
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${heure(debut)} – ${heure(fin)} · ${s['room_name'] ?? ''} · '
-              '${s['jury_name'] ?? ''}',
-              style: const TextStyle(fontSize: 12.5, color: AppColors.grey),
-            ),
-            // Note finale affichée seulement une fois validée.
-            if (note != null) ...[
-              const SizedBox(height: 10),
-              SgBadge(
-                'Note finale : ${note.replaceAll('.', ',')} / 20',
-                tone: SgTone.gold,
-                icon: Icons.workspace_premium_rounded,
-                dot: false,
-              ),
+      ],
+      details: s == null
+          ? [(Icons.event_busy_outlined, 'Soutenance pas encore planifiée')]
+          : [
+              (Icons.event_rounded, debut == null ? '—' : longDate(debut)),
+              (Icons.schedule_rounded, '${heure(debut)} – ${heure(fin)}'),
+              (Icons.meeting_room_outlined, s['room_name']?.toString() ?? ''),
             ],
-          ],
-        ],
-      ),
     );
   }
 
-  /// Pastille d'icône dorée.
-  Widget _pastille(IconData icon) => Container(
-    width: 44,
-    height: 44,
-    decoration: BoxDecoration(
-      color: AppColors.goldSoft,
-      borderRadius: BorderRadius.circular(12),
-    ),
-    child: Icon(icon, color: AppColors.goldDeep),
-  );
+  /// Encadreur : accès direct aux dossiers à suivre.
+  Widget _uneEncadreur(BuildContext context) {
+    return _CadreUne(
+      surtitre: 'ENCADREMENT',
+      titre: 'Vos dossiers à suivre',
+      texte:
+          'Consultez les rapports déposés et donnez vos avis de recevabilité.',
+      action: SgButton(
+        'Ouvrir mes dossiers',
+        icon: Icons.folder_open_rounded,
+        onPressed: () => navigateToSection(context, AppSection.documents),
+      ),
+    );
+  }
+}
+
+/// Mise en forme commune de la carte « À la une » (fond noir, accents or).
+class _CadreUne extends StatelessWidget {
+  const _CadreUne({
+    required this.surtitre,
+    required this.titre,
+    required this.texte,
+    this.details = const [],
+    this.pastilles = const [],
+    this.action,
+    this.onTap,
+  });
+
+  /// Petit titre doré en capitales.
+  final String surtitre;
+
+  /// Titre principal.
+  final String titre;
+
+  /// Texte d'accompagnement.
+  final String texte;
+
+  /// Lignes « icône + texte » (date, horaires, salle…).
+  final List<(IconData, String)> details;
+
+  /// Badges affichés sous le titre.
+  final List<Widget> pastilles;
+
+  /// Bouton d'action facultatif.
+  final Widget? action;
+
+  /// Ouverture du détail au toucher de la carte (facultatif).
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final rayon = BorderRadius.circular(AppTheme.radius + 6);
+    return Material(
+      color: Colors.transparent,
+      child: Ink(
+        decoration: BoxDecoration(
+          gradient: AppTheme.inkGradient,
+          borderRadius: rayon,
+        ),
+        child: InkWell(
+          borderRadius: rayon,
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        surtitre,
+                        style: const TextStyle(
+                          color: AppColors.gold,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.6,
+                        ),
+                      ),
+                    ),
+                    // Flèche : indique que la carte s'ouvre au toucher.
+                    if (onTap != null)
+                      const Icon(
+                        Icons.arrow_forward_rounded,
+                        color: AppColors.gold,
+                        size: 20,
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  titre,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    height: 1.25,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.4,
+                  ),
+                ),
+                if (texte.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    texte,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.72),
+                      fontSize: 13.5,
+                      height: 1.45,
+                    ),
+                  ),
+                ],
+                if (pastilles.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Wrap(spacing: 8, runSpacing: 8, children: pastilles),
+                ],
+                if (details.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  // Détails sur une ou plusieurs lignes selon la largeur.
+                  Wrap(
+                    spacing: 18,
+                    runSpacing: 10,
+                    children: [
+                      for (final (icone, valeur) in details)
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(icone, size: 16, color: AppColors.gold),
+                            const SizedBox(width: 6),
+                            // Flexible : sur un téléphone étroit, une date
+                            // longue passe à la ligne au lieu de déborder.
+                            Flexible(
+                              child: Text(
+                                valeur,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ],
+                if (action != null) ...[const SizedBox(height: 18), action!],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // ===========================================================================
-// Accès rapides
+// Grille « Vos espaces »
 // ===========================================================================
 
-/// Grille de cartes menant aux sections accessibles au rôle.
-class _QuickActions extends StatelessWidget {
-  const _QuickActions({required this.role});
+/// Grille de cartes-modules : 2 par ligne sur téléphone, 3 sur tablette,
+/// 4 sur grand écran.
+class _GrilleEspaces extends StatelessWidget {
+  const _GrilleEspaces({required this.etat});
 
-  /// Rôle de l'utilisateur connecté.
-  final String? role;
+  /// Données de l'accueil.
+  final _EtatAccueil etat;
 
-  /// Titre d'une carte : formulé selon le rôle pour la section documents.
+  /// Titre de la carte, formulé selon le rôle quand c'est utile.
   String _titre(AppSection s) => switch (s) {
-    AppSection.documents when role == 'student' =>
+    AppSection.documents when etat.role == 'student' =>
       'Mon dossier et mes documents',
-    AppSection.documents when role == 'supervisor' =>
+    AppSection.documents when etat.role == 'supervisor' =>
       'Dossiers affectés et avis d\'encadrement',
-    AppSection.planning when role == 'jury' => 'Mon planning de jury',
+    AppSection.planning when etat.role == 'jury' => 'Mon planning de jury',
     AppSection.campaigns => 'Gestion des campagnes',
     AppSection.accounts => 'Comptes et rôles',
     _ => s.label,
   };
 
+  /// Information en direct affichée sous le titre, avec sa tonalité.
+  (String, SgTone?) _info(AppSection s) {
+    final pret = !etat.loading || etat.aVenir.isNotEmpty;
+    return switch (s) {
+      AppSection.planning when pret => (
+        '${etat.aVenir.length} soutenance(s) à venir',
+        null,
+      ),
+      AppSection.conflicts when pret =>
+        etat.conflits > 0
+            ? ('${etat.conflits} à traiter', SgTone.danger)
+            : ('Aucun conflit', SgTone.success),
+      AppSection.rooms when PlanningStore.rooms.isNotEmpty => (
+        '${PlanningStore.rooms.length} salle(s) active(s)',
+        null,
+      ),
+      AppSection.jury when PlanningStore.juryMembers.isNotEmpty => (
+        '${PlanningStore.juryMembers.length} membre(s) de jury',
+        null,
+      ),
+      AppSection.documents
+          when etat.role == 'student' &&
+              etat.auth.user?['folder_status'] != null =>
+        (
+          'Dossier : ${libelleStatut(etat.auth.user!['folder_status'].toString())}',
+          sgToneForStatus(etat.auth.user!['folder_status'].toString()),
+        ),
+      _ => (s.description, null),
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
-    final sections = Session.sections(
-      role,
-    ).where((s) => s != AppSection.dashboard).toList();
+    final sections = Session.sections(etat.role)
+        .where((s) => s != AppSection.dashboard)
+        .toList();
     if (sections.isEmpty) {
       return const SgEmpty(
         icon: Icons.lock_outline_rounded,
@@ -710,63 +517,107 @@ class _QuickActions extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, c) {
         const gap = 12.0;
-        final perRow = c.maxWidth >= 900 ? 3 : (c.maxWidth >= 560 ? 2 : 1);
-        final width = (c.maxWidth - (perRow - 1) * gap) / perRow;
+        final parLigne = c.maxWidth >= 1000 ? 4 : (c.maxWidth >= 600 ? 3 : 2);
+        final largeur = (c.maxWidth - (parLigne - 1) * gap) / parLigne;
         return Wrap(
           spacing: gap,
           runSpacing: gap,
           children: [
             for (final s in sections)
-              SizedBox(width: width, child: _card(context, s)),
+              SizedBox(
+                width: largeur,
+                child: _CarteEspace(
+                  section: s,
+                  titre: _titre(s),
+                  info: _info(s),
+                  onTap: () => navigateToSection(context, s),
+                ),
+              ),
           ],
         );
       },
     );
   }
+}
 
-  /// Carte cliquable d'une section.
-  Widget _card(BuildContext context, AppSection s) {
+/// Carte d'un module : grande cible tactile, icône, titre et information.
+class _CarteEspace extends StatelessWidget {
+  const _CarteEspace({
+    required this.section,
+    required this.titre,
+    required this.info,
+    required this.onTap,
+  });
+
+  /// Module ouvert par la carte.
+  final AppSection section;
+
+  /// Titre affiché.
+  final String titre;
+
+  /// Information en direct et sa tonalité (null = texte gris).
+  final (String, SgTone?) info;
+
+  /// Action au toucher.
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final (texte, ton) = info;
+    final couleurInfo = ton == null ? AppColors.grey : sgTones(ton).$1;
     return SgCard(
+      onTap: onTap,
       padding: const EdgeInsets.all(16),
-      onTap: () => navigateToSection(context, s),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: AppColors.goldSoft,
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: Icon(s.iconActive, size: 20, color: AppColors.goldDeep),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: ConstrainedBox(
+        // Hauteur minimale homogène : grille régulière, cibles confortables.
+        constraints: const BoxConstraints(minHeight: 118),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                Text(
-                  _titre(s),
-                  style: const TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w700,
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppColors.goldSoft,
+                    borderRadius: BorderRadius.circular(13),
                   ),
+                  child: Icon(section.iconActive, color: AppColors.goldDeep),
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  s.description,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12, color: AppColors.grey),
+                const Spacer(),
+                const Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 14,
+                  color: AppColors.greyLight,
                 ),
               ],
             ),
-          ),
-          const Icon(
-            Icons.chevron_right_rounded,
-            size: 20,
-            color: AppColors.greyLight,
-          ),
-        ],
+            const SizedBox(height: 14),
+            Text(
+              titre,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 14.5,
+                fontWeight: FontWeight.w700,
+                height: 1.25,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              texte,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.35,
+                color: couleurInfo,
+                fontWeight: ton == null ? FontWeight.w400 : FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

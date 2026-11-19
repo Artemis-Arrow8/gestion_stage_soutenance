@@ -7,12 +7,11 @@ paramètres de date passés dans l'URL, conversion d'une date calendaire en
 instant UTC. Les isoler ici évite la duplication entre les modules de vues.
 """
 
-from datetime import datetime, time, timezone as datetime_timezone
+from datetime import datetime, time
+from datetime import timezone as datetime_timezone
 
 from django.utils.dateparse import parse_date
 from rest_framework.exceptions import ValidationError
-
-from api.models import Student
 
 
 def etudiant_du_compte(user):
@@ -20,16 +19,12 @@ def etudiant_du_compte(user):
     Retourne la fiche `Student` associée à un utilisateur, si elle existe.
 
     Paramètres :
-        user : utilisateur Django authentifié (ou directement une instance
-            `Student`, cas historique conservé pour compatibilité).
+        user : utilisateur Django authentifié.
 
     Retour :
         L'instance `Student` liée via `StudentAccount`, ou `None` si le
         compte n'est rattaché à aucune fiche étudiante.
     """
-    # Cas historique : certaines vues manipulaient directement un Student.
-    if isinstance(user, Student):
-        return user
     # La relation inverse `student_account` n'existe que pour les étudiants.
     account = getattr(user, 'student_account', None)
     return account.student if account else None

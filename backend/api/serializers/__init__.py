@@ -5,7 +5,9 @@ Organisation :
     * `fields`   : champs personnalisés réutilisables ;
     * `accounts` : comptes utilisateurs, rôles et liaisons métier ;
     * `academic` : campagnes, étudiants, dossiers, documents, avis, notes ;
-    * `planning` : salles, jurys, membres et soutenances.
+    * `planning` : salles, jurys, membres et soutenances ;
+    * `socle`    : historique, confidentialité, PV, planning publié,
+                   convocations et indisponibilités.
 
 Les classes sont réexportées ici pour conserver l'import historique
 `from api.serializers import X` utilisé par les vues et les tests.
@@ -27,12 +29,28 @@ from .planning import (
     JurySerializer,
     SalleSerializer,
 )
+from .socle import (
+    ConfidentialiteDossierSerializer,
+    ConvocationSerializer,
+    HabilitationDossierSerializer,
+    HistoriqueDossierSerializer,
+    IndisponibiliteSerializer,
+    ProcesVerbalSerializer,
+    VersionPlanningSerializer,
+)
 
 # Liste explicite des noms publics du paquet.
 __all__ = [
     'AccountRoleField',
     'AssessmentSerializer',
     'CampaignSerializer',
+    'ConfidentialiteDossierSerializer',
+    'ConvocationSerializer',
+    'HabilitationDossierSerializer',
+    'HistoriqueDossierSerializer',
+    'IndisponibiliteSerializer',
+    'ProcesVerbalSerializer',
+    'VersionPlanningSerializer',
     'DateTimeRangeSerializerField',
     'DefenseSerializer',
     'DocumentVersionSerializer',

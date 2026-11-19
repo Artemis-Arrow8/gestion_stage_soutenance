@@ -2,9 +2,15 @@
 /// avis des encadreurs.
 ///
 /// Le contenu visible dépend du rôle (filtré par le serveur) :
-/// * étudiant : ses dossiers, dépôt de nouvelles versions ;
-/// * encadreur : dossiers affectés, consultation et avis ;
-/// * personnel : tous les dossiers, dépôt et avis (administrateur).
+/// * étudiant : ses dossiers, dépôt de nouvelles versions, soumission ;
+/// * encadreur : dossiers affectés, consultation et avis pédagogique (qui
+///   fait passer un dossier soumis à « validé » ou « à corriger ») ;
+/// * personnel : tous les dossiers ; autorise la soutenance, refuse ou
+///   rouvre un dossier avec motif, règle la confidentialité du rapport.
+///
+/// Le statut ne se choisit jamais directement : il évolue par les étapes
+/// du chapitre 4 (le serveur refuse toute étape sautée). Chaque étape est
+/// visible dans l'historique du dossier.
 library;
 
 import 'package:file_picker/file_picker.dart';
@@ -28,10 +34,17 @@ String _fmtDate(String? raw) {
   return p.length == 3 ? '${p[2]}/${p[1]}/${p[0]}' : raw.substring(0, 10);
 }
 
-/// Statuts d'un dossier de stage, dans l'ordre de leur cycle de vie.
-///
-/// `brouillon` → `soumis` → `recevable` (planifiable) ou `rejete`.
-const _statutsDossier = ['brouillon', 'soumis', 'recevable', 'rejete'];
+/// Statuts d'un dossier de stage, dans l'ordre de leur cycle de vie :
+/// brouillon → soumis → à corriger | validé → recevable (planifiable),
+/// ou rejeté après un refus motivé.
+const _statutsDossier = [
+  'brouillon',
+  'soumis',
+  'a_corriger',
+  'valide',
+  'recevable',
+  'rejete',
+];
 
 /// Message lisible d'une erreur quelconque.
 String _message(Object e) => switch (e) {
@@ -154,12 +167,87 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     }
   }
 
-  /// Change le statut d'un dossier (réservé au personnel).
-  Future<void> _changerStatut(int folderId, String statut) async {
+  /// Applique une étape du cycle de vie au dossier [folderId].
+  ///
+  /// [action] : `soumettre`, `autoriser`, `refuser` ou `rouvrir`. Pour
+  /// refuser ou rouvrir, un motif est demandé (obligatoire côté serveur).
+  Future<void> _transition(int folderId, String action, {bool avecMotif = false}) async {
+    String? motif;
+    if (avecMotif) {
+      motif = await _demanderMotif(
+        action == 'refuser' ? 'Refuser le dossier' : 'Rouvrir le dossier',
+      );
+      if (motif == null || !mounted) return;
+    }
     try {
-      await _service.setFolderStatus(folderId, statut);
+      final dossier = await _service.transition(folderId, action, motif: motif);
       if (!mounted) return;
-      SgToast.show(context, 'Statut du dossier : ${libelleStatut(statut)}.');
+      SgToast.show(
+        context,
+        'Dossier : ${libelleStatut(dossier['status']?.toString() ?? '')}.',
+      );
+      await context.read<AuthProvider>().fetchUserProfile();
+      await _loadFolders();
+    } catch (e) {
+      if (mounted) SgToast.show(context, _message(e), tone: SgTone.danger);
+    }
+  }
+
+  /// Demande un motif ; null si l'utilisateur renonce.
+  Future<String?> _demanderMotif(String titre) {
+    final controleur = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(titre),
+        content: TextField(
+          controller: controleur,
+          autofocus: true,
+          maxLines: 3,
+          decoration: const InputDecoration(labelText: 'Motif (obligatoire)'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Retour')),
+          SgButton(
+            'Valider',
+            onPressed: () {
+              final texte = controleur.text.trim();
+              if (texte.isNotEmpty) Navigator.pop(ctx, texte);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Affiche l'historique des étapes du dossier [folderId].
+  Future<void> _ouvrirHistorique(int folderId) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _HistoriqueSheet(future: _service.historique(folderId)),
+    );
+  }
+
+  /// Bascule le rapport du dossier entre « standard » et « confidentiel ».
+  ///
+  /// Un rapport confidentiel n'est consultable que par l'étudiant, ses
+  /// encadreurs et les personnes habilitées nominativement ; la fin d'un
+  /// embargo ne le rend jamais public automatiquement.
+  Future<void> _basculerConfidentialite(int folderId, bool confidentiel) async {
+    try {
+      await _service.definirConfidentialite(
+        folderId,
+        niveau: confidentiel ? 'confidentiel' : 'standard',
+        origine: confidentiel ? 'Demande de l’entreprise d’accueil' : '',
+      );
+      if (!mounted) return;
+      SgToast.show(
+        context,
+        confidentiel
+            ? 'Rapport confidentiel : accès limité aux personnes habilitées.'
+            : 'Rapport au niveau standard.',
+      );
       await _loadFolders();
     } catch (e) {
       if (mounted) SgToast.show(context, _message(e), tone: SgTone.danger);
@@ -205,6 +293,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       await _loadDocuments(folderId);
       if (!mounted) return;
       SgToast.show(context, 'Document envoyé avec succès.');
+      // Un dossier validé ou recevable repasse à « soumis » : la nouvelle
+      // version doit être réexaminée (STA05).
+      await _loadFolders();
     } catch (e) {
       if (!mounted) return;
       SgToast.show(context, _message(e), tone: SgTone.danger);
@@ -235,7 +326,10 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         documentId: documentId,
         peutDonnerAvis: _peutDonnerAvis,
       ),
-    );
+      // Un avis fait passer le dossier à « validé » ou « à corriger ».
+    ).then((_) {
+      if (_peutDonnerAvis && mounted) _loadFolders();
+    });
   }
 
   /// Dossiers correspondant à la recherche et au filtre de statut.
@@ -300,8 +394,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                 icon: Icons.folder_open_rounded,
               ),
               SgStatCard(
-                label: 'En attente (brouillon ou soumis)',
-                value: '${compte('brouillon') + compte('soumis')}',
+                label: 'En cours (brouillon, soumis, à corriger, validé)',
+                value:
+                    '${compte('brouillon') + compte('soumis') + compte('a_corriger') + compte('valide')}',
                 icon: Icons.hourglass_top_rounded,
                 tone: SgTone.warning,
               ),
@@ -434,31 +529,8 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                 label: 'Sujet',
                 value: folder['subject']?.toString() ?? 'Non défini',
               ),
-              // Personnel : changement du statut du dossier.
-              if (_estPersonnel) ...[
-                const SizedBox(height: 16),
-                const SgOverline('Statut du dossier'),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final s in _statutsDossier)
-                      SgChip(
-                        label: libelleStatut(s),
-                        selected: statut == s,
-                        onTap: statut == s
-                            ? null
-                            : () => _changerStatut(folderId, s),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Un dossier « Recevable » peut être planifié en soutenance.',
-                  style: TextStyle(fontSize: 11.5, color: AppColors.grey),
-                ),
-              ],
+              const SizedBox(height: 16),
+              _etapesDossier(folderId, statut ?? '', folder),
               // Étudiant : modification tant que le dossier n'est pas recevable.
               if (_estEtudiant && statut != 'recevable') ...[
                 const SizedBox(height: 14),
@@ -507,6 +579,88 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  /// Étapes possibles du dossier selon le rôle et son état (chapitre 4),
+  /// historique et confidentialité.
+  Widget _etapesDossier(int folderId, String statut, Map<String, dynamic> folder) {
+    final confidentiel = folder['confidentialite']?.toString() == 'confidentiel';
+    final indication = switch (statut) {
+      'brouillon' => 'Déposez votre rapport puis soumettez le dossier.',
+      'soumis' => 'En attente de l’avis de l’encadreur sur la dernière version.',
+      'a_corriger' => 'Corrections demandées : déposez une nouvelle version puis resoumettez.',
+      'valide' => 'Avis favorable : en attente de l’autorisation de soutenance.',
+      'recevable' => 'Soutenance autorisée : le dossier peut être planifié.',
+      'rejete' => 'Dossier refusé (motif dans l’historique).',
+      _ => '',
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SgOverline('Étapes du dossier'),
+        const SizedBox(height: 6),
+        Text(indication, style: const TextStyle(fontSize: 12.5, color: AppColors.grey)),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            if (_estEtudiant && (statut == 'brouillon' || statut == 'a_corriger'))
+              SgButton(
+                'Soumettre mon dossier',
+                icon: Icons.send_rounded,
+                variant: SgBtnVariant.dark,
+                dense: true,
+                onPressed: () => _transition(folderId, 'soumettre'),
+              ),
+            if (_estPersonnel && statut == 'valide')
+              SgButton(
+                'Autoriser la soutenance',
+                icon: Icons.verified_rounded,
+                variant: SgBtnVariant.dark,
+                dense: true,
+                onPressed: () => _transition(folderId, 'autoriser'),
+              ),
+            if (_estPersonnel && const {'soumis', 'a_corriger', 'valide'}.contains(statut))
+              SgButton(
+                'Refuser',
+                icon: Icons.block_rounded,
+                variant: SgBtnVariant.outline,
+                dense: true,
+                onPressed: () => _transition(folderId, 'refuser', avecMotif: true),
+              ),
+            if (_estPersonnel && const {'rejete', 'recevable'}.contains(statut))
+              SgButton(
+                'Rouvrir',
+                icon: Icons.lock_open_rounded,
+                variant: SgBtnVariant.outline,
+                dense: true,
+                onPressed: () => _transition(folderId, 'rouvrir', avecMotif: true),
+              ),
+            SgButton(
+              'Historique',
+              icon: Icons.history_rounded,
+              variant: SgBtnVariant.outline,
+              dense: true,
+              onPressed: () => _ouvrirHistorique(folderId),
+            ),
+          ],
+        ),
+        if (_estPersonnel) ...[
+          const SizedBox(height: 8),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: confidentiel,
+            onChanged: (valeur) => _basculerConfidentialite(folderId, valeur),
+            title: const Text('Rapport confidentiel', style: TextStyle(fontSize: 13)),
+            subtitle: const Text(
+              'Accès réservé à l’étudiant, à ses encadreurs et aux personnes habilitées.',
+              style: TextStyle(fontSize: 11.5),
+            ),
+          ),
+        ],
+      ],
     );
   }
 
@@ -858,6 +1012,79 @@ class _AvisSheetState extends State<_AvisSheet> {
   }
 }
 
+/// Panneau inférieur : historique des étapes d'un dossier (preuves).
+class _HistoriqueSheet extends StatelessWidget {
+  const _HistoriqueSheet({required this.future});
+
+  /// Chargement de l'historique.
+  final Future<List<Map<String, dynamic>>> future;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Historique du dossier',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+            ),
+            const SizedBox(height: 12),
+            Flexible(
+              child: FutureBuilder<List<Map<String, dynamic>>>(
+                future: future,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const SgLoading();
+                  }
+                  if (snapshot.hasError) {
+                    return SgBanner(message: _message(snapshot.error!), tone: SgTone.danger);
+                  }
+                  final lignes = snapshot.data ?? const [];
+                  if (lignes.isEmpty) {
+                    return const Text(
+                      'Aucune étape enregistrée pour le moment.',
+                      style: TextStyle(fontSize: 13, color: AppColors.grey),
+                    );
+                  }
+                  return ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final l in lignes.reversed)
+                        ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.timeline_rounded, color: AppColors.goldDeep),
+                          title: Text(
+                            '${l['evenement']} : ${libelleStatut(l['statut_avant']?.toString() ?? '')}'
+                            ' → ${libelleStatut(l['statut_apres']?.toString() ?? '')}',
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                          ),
+                          subtitle: Text(
+                            [
+                              _fmtDate(l['created_at']?.toString()),
+                              if (l['acteur_nom'] != null) 'par ${l['acteur_nom']}',
+                              if (l['version'] != null) 'V${l['version']}',
+                              if ((l['motif'] ?? '').toString().isNotEmpty) '« ${l['motif']} »',
+                            ].join(' · '),
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Boîte de dialogue de création / modification d'un dossier de stage
 /// (entreprise d'accueil et sujet).
 class _FolderDialog extends StatefulWidget {
@@ -899,8 +1126,8 @@ class _FolderDialogState extends State<_FolderDialog> {
       title: Text(creation ? 'Créer mon dossier de stage' : 'Modifier mon dossier'),
       content: SizedBox(
         width: 460,
-        child: Form(
-          key: _formKey,
+        child: SgFormulaire(
+          formKey: _formKey,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [

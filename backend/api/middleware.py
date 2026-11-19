@@ -17,8 +17,13 @@ from django.http import JsonResponse
 
 from api.services.sante import verifier_sante
 
-# Chemins acceptés pour la sonde (avec ou sans barre oblique finale).
-CHEMINS_SANTE = frozenset({'/health', '/health/'})
+# Sondes de santé (chapitre 14 du dossier), avec ou sans barre finale :
+# * /health/live  : le processus répond (aucun accès à la base) ;
+# * /health/ready : le service est prêt, base PostgreSQL comprise ;
+# * /health/      : alias historique de /health/ready (utilisé par Render).
+CHEMINS_LIVE = frozenset({'/health/live', '/health/live/'})
+CHEMINS_READY = frozenset({'/health', '/health/', '/health/ready', '/health/ready/'})
+CHEMINS_SANTE = CHEMINS_LIVE | CHEMINS_READY
 
 
 class HealthCheckMiddleware:
@@ -50,7 +55,11 @@ class HealthCheckMiddleware:
         """
         # `path_info` exclut un éventuel préfixe SCRIPT_NAME.
         if request.path_info in CHEMINS_SANTE and request.method in ('GET', 'HEAD'):
-            corps, code_http = verifier_sante()
+            if request.path_info in CHEMINS_LIVE:
+                # Vivacité : aucune dépendance interrogée, aucune donnée sensible.
+                corps, code_http = {'status': 'ok'}, 200
+            else:
+                corps, code_http = verifier_sante()
             reponse = JsonResponse(corps, status=code_http)
             # Une sonde ne doit jamais être servie depuis un cache intermédiaire.
             reponse['Cache-Control'] = 'no-store'

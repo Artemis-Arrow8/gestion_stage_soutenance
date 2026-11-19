@@ -2,8 +2,15 @@
 /// adaptative commune à tous les écrans.
 ///
 /// * Grand écran (≥ [AppBreakpoints.expanded]) : barre latérale complète.
-/// * Écran moyen (≥ [AppBreakpoints.medium]) : rail d'icônes compact.
-/// * Téléphone : menu en tiroir ouvert depuis la barre supérieure.
+/// * Tablette (≥ [AppBreakpoints.compact]) : rail d'icônes compact.
+/// * Téléphone : conçu pour l'usage à UNE MAIN (inspiré du mode Samsung) :
+///   - barre de navigation en BAS de l'écran, à portée du pouce ;
+///   - bouton « Menu » qui ouvre tous les modules en grandes cartes ;
+///   - grand titre en haut : le contenu et les boutons descendent vers le
+///     pouce ;
+///   - actions de la page regroupées juste au-dessus de la barre du bas ;
+///   - geste « retour » (glisser) : revient à l'écran précédent ; depuis
+///     l'accueil, il faut le refaire une seconde fois pour quitter.
 ///
 /// Chaque écran se construit avec [SgPage] en indiquant sa section, son
 /// titre et ses actions ; la coque se charge du reste.
@@ -13,6 +20,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../core/config/app_config.dart';
+import '../core/network/hors_ligne.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/dates.dart';
 import '../models/defense.dart';
@@ -86,9 +94,11 @@ abstract final class Session {
       AppSection.documents,
       AppSection.profil,
     ],
+    // Le jury consulte ses soutenances et saisit les notes (chapitre 2).
     'jury' => const [
       AppSection.dashboard,
       AppSection.planning,
+      AppSection.evaluations,
       AppSection.profil,
     ],
     'student' => const [
@@ -130,7 +140,7 @@ extension AppSectionX on AppSection {
     AppSection.rooms => 'Occupation et disponibilité des salles.',
     AppSection.jury => 'Membres et charge des jurys.',
     AppSection.conflicts => 'Chevauchements à arbitrer.',
-    AppSection.evaluations => 'Notes des soutenances et validation.',
+    AppSection.evaluations => 'Notes, approbation et procès-verbaux.',
     AppSection.documents => 'Dossiers, rapports et avis.',
     AppSection.profil => 'Vos informations et votre mot de passe.',
   };
@@ -190,7 +200,7 @@ void navigateToSection(BuildContext context, AppSection section) {
     return;
   }
   navigator.pushAndRemoveUntil(
-    _fadeRoute(screenFor(section)),
+    _route(screenFor(section)),
     (route) => route.isFirst,
   );
 }
@@ -200,26 +210,22 @@ void navigateToSection(BuildContext context, AppSection section) {
 /// Retourne la valeur renvoyée par l'écran à sa fermeture (ex. `true` après
 /// une création réussie).
 Future<T?> pushPage<T>(BuildContext context, Widget page) {
-  return Navigator.of(context).push<T>(_fadeRoute<T>(page));
+  return Navigator.of(context).push<T>(_route<T>(page));
 }
 
 /// Remplace l'écran courant par [page] (ex. fiche rechargée après une
-/// modification), avec la même transition en fondu.
+/// modification).
 Future<void> replacePage(BuildContext context, Widget page) {
-  return Navigator.of(context).pushReplacement(_fadeRoute<void>(page));
+  return Navigator.of(context).pushReplacement(_route<void>(page));
 }
 
-/// Transition en fondu court, plus sobre qu'un glissement latéral pour
-/// une navigation d'application de gestion.
-PageRoute<T> _fadeRoute<T>(Widget page) => PageRouteBuilder<T>(
-  transitionDuration: const Duration(milliseconds: 200),
-  reverseTransitionDuration: const Duration(milliseconds: 160),
-  pageBuilder: (_, _, _) => page,
-  transitionsBuilder: (_, animation, _, child) => FadeTransition(
-    opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
-    child: child,
-  ),
-);
+/// Route standard Material : ses transitions viennent du thème
+/// (`AppTheme.light.pageTransitionsTheme`). Elle prend en charge les gestes
+/// de retour de chaque plateforme : glissement depuis le bord (iPhone),
+/// geste « retour » prédictif (Android), bouton ou geste retour du
+/// navigateur (Web).
+PageRoute<T> _route<T>(Widget page) =>
+    MaterialPageRoute<T>(builder: (_) => page);
 
 // ===========================================================================
 // Mise en page commune
@@ -272,20 +278,31 @@ class SgPage extends StatelessWidget {
       builder: (context, c) {
         final w = c.maxWidth;
         final showSidebar = w >= AppBreakpoints.expanded;
-        final showRail = w >= AppBreakpoints.medium && !showSidebar;
+        final showRail = w >= AppBreakpoints.compact && !showSidebar;
+        // Téléphone : navigation à une main, en bas de l'écran.
+        final mobile = !showSidebar && !showRail;
         // Marges latérales plus généreuses sur grand écran.
         final padH = w >= AppBreakpoints.medium ? 32.0 : 16.0;
+        // Mode « une main » : grand espace au-dessus du titre (environ 12 %
+        // de la hauteur) pour que le contenu descende vers le pouce.
+        final hauteur = MediaQuery.sizeOf(context).height;
+        final espaceHaut = mobile ? (hauteur * 0.12).clamp(24.0, 110.0) : 24.0;
 
         Widget content = SingleChildScrollView(
           // Toujours défilable pour que « tirer pour actualiser » fonctionne.
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: EdgeInsets.fromLTRB(padH, 24, padH, 40),
+          padding: EdgeInsets.fromLTRB(padH, espaceHaut, padH, 40),
           child: Center(
             child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: maxWidth),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [_header(w), const SizedBox(height: 24), child],
+                children: [
+                  // Sur téléphone, les actions vont en bas (zone du pouce).
+                  _header(w, avecActions: !mobile),
+                  const SizedBox(height: 24),
+                  child,
+                ],
               ),
             ),
           ),
@@ -296,13 +313,6 @@ class SgPage extends StatelessWidget {
 
         return Scaffold(
           backgroundColor: AppColors.bg,
-          drawer: showSidebar || showRail
-              ? null
-              : Drawer(
-                  width: 280,
-                  backgroundColor: AppColors.ink,
-                  child: _Sidebar(current: section, expanded: true),
-                ),
           body: Row(
             children: [
               if (showSidebar) _Sidebar(current: section, expanded: true),
@@ -310,27 +320,42 @@ class SgPage extends StatelessWidget {
               Expanded(
                 child: Column(
                   children: [
-                    _TopBar(showMenu: !showSidebar && !showRail),
+                    _TopBar(compact: mobile),
+                    // Bandeau visible seulement sans connexion au serveur.
+                    _BandeauHorsLigne(onRetry: onRefresh),
                     Expanded(child: content),
                   ],
                 ),
               ),
             ],
           ),
+          // Téléphone : actions de la page + barre de navigation, en bas.
+          bottomNavigationBar: mobile
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (actions.isNotEmpty) _BarreActions(actions: actions),
+                    _BottomNav(current: section),
+                  ],
+                )
+              : null,
         );
       },
     );
   }
 
-  /// En-tête : titre, sous-titre et actions (empilées sur petit écran).
-  Widget _header(double w) {
+  /// En-tête : titre, sous-titre et, si [avecActions], les actions.
+  ///
+  /// Sur téléphone, le titre est plus grand (style « une main ») et les
+  /// actions sont affichées en bas de l'écran par [_BarreActions].
+  Widget _header(double w, {required bool avecActions}) {
     final titleCol = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           title,
           style: TextStyle(
-            fontSize: w >= 700 ? 26 : 21,
+            fontSize: w >= 700 ? 26 : 28,
             fontWeight: FontWeight.w700,
             letterSpacing: -0.7,
             height: 1.2,
@@ -351,9 +376,9 @@ class SgPage extends StatelessWidget {
       ],
     );
 
-    if (actions.isEmpty) return titleCol;
+    if (actions.isEmpty || !avecActions) return titleCol;
 
-    // Téléphone : actions sous le titre, sur plusieurs lignes si besoin.
+    // Écran étroit : actions sous le titre, sur plusieurs lignes si besoin.
     if (w < AppBreakpoints.compact + 40) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -379,16 +404,20 @@ class SgPage extends StatelessWidget {
 // Barre supérieure
 // ===========================================================================
 
-/// Barre supérieure : menu (mobile), marque, alertes et compte.
+/// Barre supérieure : marque, alertes et compte.
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.showMenu});
+  const _TopBar({required this.compact});
 
-  /// Affiche le bouton d'ouverture du tiroir de navigation.
-  final bool showMenu;
+  /// Version allégée pour téléphone (la navigation est en bas d'écran).
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
+    // Vrai sur tout écran ouvert par-dessus l'accueil (module, fiche,
+    // formulaire) : une flèche « Retour » est alors affichée, en plus du
+    // geste de glissement depuis le bord de l'écran.
+    final peutRevenir = ModalRoute.of(context)?.canPop ?? false;
     return Container(
       height: 64,
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -402,13 +431,16 @@ class _TopBar extends StatelessWidget {
           final w = c.maxWidth;
           return Row(
             children: [
-              if (showMenu)
+              // Flèche « Retour » : même effet que le geste de glissement
+              // (`maybePop` respecte la garde des formulaires en cours).
+              if (peutRevenir)
                 IconButton(
-                  tooltip: 'Menu',
-                  onPressed: () => Scaffold.of(context).openDrawer(),
-                  icon: const Icon(Icons.menu_rounded, color: AppColors.ink),
-                ),
-              const SizedBox(width: 4),
+                  tooltip: 'Retour',
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                )
+              else
+                const SizedBox(width: 4),
               // Rappel de marque, utile quand la barre latérale est masquée.
               Container(
                 width: 8,
@@ -427,7 +459,7 @@ class _TopBar extends StatelessWidget {
                   letterSpacing: 1.6,
                 ),
               ),
-              if (w > 560) ...[
+              if (!compact && w > 560) ...[
                 const Text(
                   '  ·  ',
                   style: TextStyle(fontSize: 12, color: AppColors.greyLight),
@@ -436,7 +468,10 @@ class _TopBar extends StatelessWidget {
                   child: Text(
                     Session.roleLabel(auth.role),
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12.5, color: AppColors.grey),
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      color: AppColors.grey,
+                    ),
                   ),
                 ),
               ],
@@ -648,10 +683,7 @@ class _Sidebar extends StatelessWidget {
               ),
             ),
             const Divider(color: AppColors.sidebarLine, height: 1),
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: _logout(context),
-            ),
+            Padding(padding: const EdgeInsets.all(12), child: _logout(context)),
           ],
         ),
       ),
@@ -661,7 +693,12 @@ class _Sidebar extends StatelessWidget {
   /// Logo et nom de l'application.
   Widget _brand() {
     return Padding(
-      padding: EdgeInsets.fromLTRB(expanded ? 20 : 0, 22, expanded ? 20 : 0, 16),
+      padding: EdgeInsets.fromLTRB(
+        expanded ? 20 : 0,
+        22,
+        expanded ? 20 : 0,
+        16,
+      ),
       child: Row(
         mainAxisAlignment: expanded
             ? MainAxisAlignment.start
@@ -757,13 +794,20 @@ class _Sidebar extends StatelessWidget {
   /// Bouton de déconnexion en bas du menu.
   Widget _logout(BuildContext context) {
     final content = Padding(
-      padding: EdgeInsets.symmetric(horizontal: expanded ? 12 : 0, vertical: 11),
+      padding: EdgeInsets.symmetric(
+        horizontal: expanded ? 12 : 0,
+        vertical: 11,
+      ),
       child: Row(
         mainAxisAlignment: expanded
             ? MainAxisAlignment.start
             : MainAxisAlignment.center,
         children: [
-          const Icon(Icons.logout_rounded, size: 18, color: AppColors.sidebarText),
+          const Icon(
+            Icons.logout_rounded,
+            size: 18,
+            color: AppColors.sidebarText,
+          ),
           if (expanded) ...[
             const SizedBox(width: 12),
             const Text(
@@ -790,7 +834,10 @@ class _Sidebar extends StatelessWidget {
     final content = AnimatedContainer(
       duration: const Duration(milliseconds: 160),
       margin: const EdgeInsets.only(bottom: 4),
-      padding: EdgeInsets.symmetric(horizontal: expanded ? 12 : 0, vertical: 11),
+      padding: EdgeInsets.symmetric(
+        horizontal: expanded ? 12 : 0,
+        vertical: 11,
+      ),
       decoration: BoxDecoration(
         color: active ? AppColors.sidebarActive : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
@@ -839,5 +886,314 @@ class _Sidebar extends StatelessWidget {
     );
     // En mode rail, l'infobulle remplace le libellé masqué.
     return expanded ? tappable : Tooltip(message: s.label, child: tappable);
+  }
+}
+
+// ===========================================================================
+// Navigation « une main » (téléphone)
+// ===========================================================================
+
+/// Sections affichées directement dans la barre du bas, selon le rôle.
+///
+/// Au plus 3 sections + « Menu » : des cibles larges, faciles à atteindre
+/// avec le pouce. Les autres modules sont dans le menu en cartes.
+List<AppSection> _sectionsBarre(String? role) {
+  final toutes = Session.sections(role);
+  const prioritaires = [
+    AppSection.dashboard,
+    AppSection.planning,
+    AppSection.documents,
+    AppSection.profil,
+  ];
+  final choisies = prioritaires.where(toutes.contains).toList();
+  // Avec un menu « Plus », on garde 3 sections pour laisser sa place.
+  return toutes.length > choisies.length ? choisies.take(3).toList() : choisies;
+}
+
+/// Barre de navigation en bas de l'écran (téléphone).
+class _BottomNav extends StatelessWidget {
+  const _BottomNav({required this.current});
+
+  /// Section active.
+  final AppSection current;
+
+  @override
+  Widget build(BuildContext context) {
+    final role = context.watch<AuthProvider>().role;
+    final barre = _sectionsBarre(role);
+    final avecMenu = Session.sections(role).length > barre.length;
+    // La section courante peut ne pas figurer dans la barre : on surligne
+    // alors « Menu ».
+    final index = barre.contains(current)
+        ? barre.indexOf(current)
+        : (avecMenu ? barre.length : 0);
+
+    return NavigationBar(
+      height: 68,
+      backgroundColor: AppColors.white,
+      indicatorColor: AppColors.goldSoft,
+      surfaceTintColor: Colors.transparent,
+      selectedIndex: index,
+      labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+      onDestinationSelected: (i) {
+        if (i < barre.length) {
+          if (barre[i] != current) navigateToSection(context, barre[i]);
+        } else {
+          _ouvrirMenu(context, current);
+        }
+      },
+      destinations: [
+        for (final s in barre)
+          NavigationDestination(
+            icon: Icon(s.icon, color: AppColors.grey),
+            selectedIcon: Icon(s.iconActive, color: AppColors.goldDeep),
+            label: s == AppSection.dashboard ? 'Accueil' : s.label,
+          ),
+        if (avecMenu)
+          const NavigationDestination(
+            icon: Icon(Icons.grid_view_rounded, color: AppColors.grey),
+            selectedIcon: Icon(
+              Icons.grid_view_rounded,
+              color: AppColors.goldDeep,
+            ),
+            label: 'Menu',
+          ),
+      ],
+    );
+  }
+}
+
+/// Ouvre le menu complet : tous les modules en grandes cartes, en bas de
+/// l'écran (atteignables d'une main), plus la déconnexion.
+void _ouvrirMenu(BuildContext context, AppSection current) {
+  final auth = context.read<AuthProvider>();
+  final sections = Session.sections(auth.role);
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (ctx) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(left: 4, bottom: 12),
+              child: Text(
+                'Tous les modules',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+              ),
+            ),
+            // Grille de cartes : 3 par ligne, grandes cibles tactiles.
+            GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 3,
+              mainAxisSpacing: 10,
+              crossAxisSpacing: 10,
+              childAspectRatio: 1.05,
+              children: [
+                for (final s in sections)
+                  _CarteMenu(
+                    section: s,
+                    active: s == current,
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      if (s != current) navigateToSection(context, s);
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            SgButton(
+              'Se déconnecter',
+              icon: Icons.logout_rounded,
+              variant: SgBtnVariant.outline,
+              expand: true,
+              onPressed: () {
+                Navigator.pop(ctx);
+                auth.logout();
+              },
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+/// Carte d'un module dans le menu complet.
+class _CarteMenu extends StatelessWidget {
+  const _CarteMenu({
+    required this.section,
+    required this.active,
+    required this.onTap,
+  });
+
+  /// Module représenté.
+  final AppSection section;
+
+  /// Vrai si c'est le module affiché actuellement.
+  final bool active;
+
+  /// Action au toucher.
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: active ? AppColors.ink : AppColors.surfaceAlt,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                section.iconActive,
+                size: 26,
+                color: active ? AppColors.gold : AppColors.goldDeep,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                section.label,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: active ? Colors.white : AppColors.ink,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Barre des actions de la page, posée au-dessus de la navigation du bas
+/// sur téléphone (zone naturelle du pouce).
+class _BarreActions extends StatelessWidget {
+  const _BarreActions({required this.actions});
+
+  /// Boutons d'action de la page.
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: const BoxDecoration(
+        color: AppColors.white,
+        border: Border(top: BorderSide(color: AppColors.line)),
+      ),
+      // Défilement horizontal si les boutons ne tiennent pas sur une ligne.
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (var i = 0; i < actions.length; i++) ...[
+              if (i > 0) const SizedBox(width: 10),
+              actions[i],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ===========================================================================
+// Bandeau « Mode hors ligne »
+// ===========================================================================
+
+/// Bandeau noir et or affiché sous la barre supérieure quand le serveur
+/// est injoignable.
+///
+/// Il indique de quand datent les données affichées (mémorisées lors de la
+/// dernière connexion) et rappelle que les modifications attendent le
+/// retour du réseau. « Réessayer » relance le chargement de la page ; dès
+/// qu'une réponse arrive du serveur, le bandeau disparaît tout seul.
+class _BandeauHorsLigne extends StatelessWidget {
+  const _BandeauHorsLigne({this.onRetry});
+
+  /// Rechargement de la page (null : pas de bouton « Réessayer »).
+  final Future<void> Function()? onRetry;
+
+  /// Date courte et heure : « 19/11 à 14:32 ».
+  static String _quand(DateTime d) {
+    String deux(int n) => n.toString().padLeft(2, '0');
+    return '${deux(d.day)}/${deux(d.month)} à ${deux(d.hour)}:${deux(d.minute)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: HorsLigne.actif,
+      builder: (context, actif, _) {
+        if (!actif) return const SizedBox.shrink();
+        return ValueListenableBuilder<DateTime?>(
+          valueListenable: HorsLigne.donneesDu,
+          builder: (context, date, _) => Material(
+            color: AppColors.ink,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.cloud_off_rounded,
+                    color: AppColors.gold,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Mode hors ligne',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
+                        ),
+                        Text(
+                          date == null
+                              ? 'Serveur injoignable. Les modifications '
+                                    'attendront le retour de la connexion.'
+                              : 'Données du ${_quand(date)}. Les '
+                                    'modifications attendront la connexion.',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.75),
+                            fontSize: 12,
+                            height: 1.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (onRetry != null)
+                    TextButton(
+                      onPressed: onRetry,
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.gold,
+                      ),
+                      child: const Text('Réessayer'),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 }

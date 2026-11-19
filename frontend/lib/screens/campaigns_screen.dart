@@ -4,6 +4,9 @@
 /// campagne active ; les dossiers de stage sont rattachés à une campagne.
 library;
 
+import 'dart:convert';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
@@ -83,6 +86,51 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
 
   /// Ouvre le formulaire de création ([campaign] null) ou de modification,
   /// puis enregistre la saisie côté serveur.
+  /// Importe des étudiants (CSV) dans [campaign] : aperçu sans écriture,
+  /// puis import confirmé. Réimporter le même fichier ne crée aucun doublon.
+  Future<void> _importer(CampaignRecord campaign) async {
+    final fichier = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: ['csv', 'txt'],
+    );
+    if (fichier == null || !mounted) return;
+    final String csv;
+    try {
+      csv = utf8.decode(await fichier.readAsBytes());
+    } on FormatException {
+      if (mounted) {
+        SgToast.show(context, 'Le fichier doit être encodé en UTF-8.', tone: SgTone.danger);
+      }
+      return;
+    }
+    try {
+      final apercu = await _service.importerEtudiants(
+        campagne: campaign.id,
+        csv: csv,
+        simulation: true,
+      );
+      if (!mounted) return;
+      final confirme = await showDialog<bool>(
+        context: context,
+        builder: (_) => _RapportImport(rapport: apercu, apercu: true),
+      );
+      if (confirme != true || !mounted) return;
+      final rapport = await _service.importerEtudiants(
+        campagne: campaign.id,
+        csv: csv,
+        simulation: false,
+        cle: ApiService.nouvelleCleIdempotence(),
+      );
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (_) => _RapportImport(rapport: rapport, apercu: false),
+      );
+    } on ApiException catch (e) {
+      if (mounted) SgToast.show(context, e.message, tone: SgTone.danger);
+    }
+  }
+
   Future<void> _editCampaign({CampaignRecord? campaign}) async {
     final draft = await showDialog<_CampaignDraft>(
       context: context,
@@ -223,6 +271,13 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
             ),
           ),
           SgIconBtn(
+            icon: Icons.group_add_outlined,
+            tooltip: 'Importer des étudiants (CSV)',
+            tone: SgTone.gold,
+            onPressed: _saving ? null : () => _importer(campaign),
+          ),
+          const SizedBox(width: 6),
+          SgIconBtn(
             icon: Icons.edit_outlined,
             tooltip: 'Modifier la campagne',
             tone: SgTone.info,
@@ -232,6 +287,77 @@ class _CampaignsScreenState extends State<CampaignsScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Rapport d'import (aperçu ou résultat définitif).
+class _RapportImport extends StatelessWidget {
+  const _RapportImport({required this.rapport, required this.apercu});
+
+  /// Rapport renvoyé par le serveur.
+  final Map<String, dynamic> rapport;
+
+  /// Vrai pour l'aperçu (bouton « Importer ») ; faux pour le résultat.
+  final bool apercu;
+
+  @override
+  Widget build(BuildContext context) {
+    final erreurs = (rapport['erreurs'] as List?) ?? const [];
+    Widget ligne(String libelle, Object? valeur) => Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Expanded(child: Text(libelle, style: const TextStyle(fontSize: 13))),
+          Text('$valeur', style: const TextStyle(fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+    return AlertDialog(
+      title: Text(apercu ? 'Aperçu de l’import' : 'Import terminé'),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (apercu)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    'Rien n’est encore enregistré. Les étudiants déjà connus ne '
+                    'sont ni recréés ni modifiés.',
+                    style: TextStyle(fontSize: 12.5, color: AppColors.grey),
+                  ),
+                ),
+              ligne('Étudiants créés', rapport['etudiants_crees']),
+              ligne('Étudiants déjà connus', rapport['etudiants_existants']),
+              ligne('Dossiers créés (brouillon)', rapport['dossiers_crees']),
+              ligne('Dossiers déjà existants', rapport['dossiers_existants']),
+              if (erreurs.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(
+                  '${erreurs.length} ligne(s) en erreur (non importées) :',
+                  style: const TextStyle(fontWeight: FontWeight.w700, color: AppColors.danger),
+                ),
+                for (final e in erreurs)
+                  Text(
+                    'Ligne ${(e as Map)['ligne']} : ${e['erreur']}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: Text(apercu ? 'Annuler' : 'Fermer'),
+        ),
+        if (apercu) SgButton('Importer', onPressed: () => Navigator.pop(context, true)),
+      ],
     );
   }
 }
@@ -286,8 +412,8 @@ class _CampaignDialogState extends State<_CampaignDialog> {
       title: Text(
         widget.campaign == null ? 'Créer une campagne' : 'Modifier la campagne',
       ),
-      content: Form(
-        key: _formKey,
+      content: SgFormulaire(
+        formKey: _formKey,
         child: SizedBox(
           width: 420,
           child: Column(

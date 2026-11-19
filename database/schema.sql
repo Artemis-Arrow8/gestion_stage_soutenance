@@ -56,6 +56,9 @@ CREATE TABLE internship_folder (
     status VARCHAR(50) DEFAULT 'brouillon',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+-- F01 : un seul dossier par étudiant et par campagne (migration 0013).
+CREATE UNIQUE INDEX IF NOT EXISTS dossier_unique_par_campagne
+    ON internship_folder (student_id, campaign_id);
 
 -- Affectations nominatives : un encadreur ne consulte que les dossiers liés.
 CREATE TABLE IF NOT EXISTS folder_supervisor (
@@ -135,12 +138,16 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 -- Contrainte d'exclusion pour empêcher les doubles réservations de salles
 ALTER TABLE defense
 ADD CONSTRAINT prevent_room_double_booking 
-EXCLUDE USING gist (room_name WITH =, slot_range WITH &&);
+EXCLUDE USING gist (room_name WITH =, slot_range WITH &&)
+-- Une soutenance annulée libère la salle (migration 0013).
+WHERE (status <> 'annule');
 
 -- Contrainte d'exclusion pour empêcher qu'un même jury soit affecté sur deux soutenances en même temps
 ALTER TABLE defense
 ADD CONSTRAINT prevent_jury_double_booking 
-EXCLUDE USING gist (jury_id WITH =, slot_range WITH &&);
+EXCLUDE USING gist (jury_id WITH =, slot_range WITH &&)
+-- Une soutenance annulée libère le jury (migration 0013).
+WHERE (status <> 'annule');
 
 -- =============================================================
 -- 10. Table Salle — AJOUT TÂCHE 4 (module planification)

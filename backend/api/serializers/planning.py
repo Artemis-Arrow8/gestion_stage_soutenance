@@ -8,6 +8,7 @@ salle/jury, recevabilité du dossier, durée maximale…) au service
 
 from rest_framework import serializers
 
+from api.exceptions import ConflitMetier
 from api.models import Defense, Jury, JuryMember, Room
 from api.services import conflicts
 
@@ -51,6 +52,21 @@ class JuryMemberSerializer(serializers.ModelSerializer):
         """Supprime les espaces superflus autour du nom."""
         return value.strip()
 
+    def validate(self, attrs):
+        """Une même personne ne figure qu'une fois dans un jury (chapitre 4)."""
+        attrs = super().validate(attrs)
+        jury = attrs.get('jury') or (self.instance.jury if self.instance else None)
+        nom = attrs.get('member_name') or (self.instance.member_name if self.instance else '')
+        if jury is not None and nom:
+            doublons = JuryMember.objects.filter(jury=jury, member_name__iexact=nom)
+            if self.instance is not None:
+                doublons = doublons.exclude(pk=self.instance.pk)
+            if doublons.exists():
+                raise serializers.ValidationError(
+                    {'member_name': f'« {nom} » fait déjà partie de ce jury.'}
+                )
+        return attrs
+
     def validate_role_in_jury(self, value):
         """
         Normalise puis valide le rôle du membre dans le jury.
@@ -82,6 +98,18 @@ class JurySerializer(serializers.ModelSerializer):
         """Supprime les espaces superflus autour du nom du jury."""
         return value.strip()
 
+    def validate(self, attrs):
+        """F04 : un jury n'est déclaré complet que si sa composition le permet."""
+        attrs = super().validate(attrs)
+        if attrs.get('is_complete') and self.instance is not None:
+            from api.services.jurys import exiger_composition_complete
+            exiger_composition_complete(self.instance)
+        elif attrs.get('is_complete'):
+            raise serializers.ValidationError(
+                {'is_complete': 'Ajoutez les membres avant de déclarer le jury complet.'}
+            )
+        return attrs
+
 
 class DefenseSerializer(serializers.ModelSerializer):
     """
@@ -103,6 +131,8 @@ class DefenseSerializer(serializers.ModelSerializer):
     )
     subject = serializers.CharField(source='folder.subject', read_only=True)
     jury_name = serializers.CharField(source='jury.name', read_only=True)
+    # Numéro de la version de planning qui a publié la soutenance (ou None).
+    version_publiee = serializers.IntegerField(read_only=True, default=None)
 
     class Meta:
         model = Defense
@@ -119,7 +149,11 @@ class DefenseSerializer(serializers.ModelSerializer):
             'slot_start',
             'slot_end',
             'status',
+            'version_publiee',
         ]
+        # Le statut ne change que par les actions confirmer / publier /
+        # reporter / annuler / tenue (api/services/publication.py).
+        read_only_fields = ('status',)
 
     def validate(self, attrs):
         """
@@ -138,6 +172,15 @@ class DefenseSerializer(serializers.ModelSerializer):
         """
         attrs = super().validate(attrs)
         instance = self.instance
+        # Une soutenance publiée (ou passée) ne se modifie plus directement :
+        # le report produit une nouvelle version et de nouvelles convocations.
+        if instance is not None and instance.status not in ('planifie', 'confirme'):
+            raise ConflitMetier(
+                f"La soutenance est « {instance.status} » : utilisez le report "
+                "(nouvelle version du planning) ou l'annulation.",
+                regle='STA07',
+                details={'soutenance': instance.pk},
+            )
 
         # Valeur fournie, sinon valeur actuelle (cas PATCH), sinon None.
         debut = attrs.get('slot_start') or (instance.slot_range.lower if instance else None)
@@ -178,7 +221,7 @@ class DefenseSerializer(serializers.ModelSerializer):
             room_name=validated_data.pop('room_name'),
             debut=slot_range.lower,
             fin=slot_range.upper,
-            status=validated_data.pop('status', 'planifie'),
+            status='planifie',
         )
 
     def update(self, instance, validated_data):
@@ -190,7 +233,9 @@ class DefenseSerializer(serializers.ModelSerializer):
             room_name=validated_data.pop('room_name', instance.room_name),
             debut=slot_range.lower,
             fin=slot_range.upper,
-            status=validated_data.pop('status', instance.status),
+            # Modifier une soutenance confirmée la ramène à « proposée » :
+            # elle devra être reconfirmée avant publication.
+            status='planifie',
             defense_id=instance.pk,
         )
 

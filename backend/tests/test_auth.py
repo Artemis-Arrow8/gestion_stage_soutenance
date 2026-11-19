@@ -24,7 +24,6 @@ from api.models import (
     StudentAccount,
 )
 
-
 User = get_user_model()
 
 
@@ -169,13 +168,6 @@ class AuthModuleTestCase(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-    def test_student_permission_for_existing_student_object(self):
-        """Une fiche étudiante liée donne le rôle étudiant."""
-        self.client.force_authenticate(user=self.student)
-        response = self.client.get(self.folder_list_url)
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-
     def test_supervisor_permission(self):
         """Le rôle encadreur est reconnu et limité à ses droits."""
         supervisor = User.objects.create_user(
@@ -209,6 +201,8 @@ class AuthModuleTestCase(APITestCase):
                 campaign=self.campaign,
                 company_name="Entreprise",
                 subject="Dossier de test",
+                # L'avis pédagogique porte sur un dossier SOUMIS (chapitre 4).
+                status="soumis",
             ),
             version_number=1,
             file_path="rapport.pdf",
@@ -254,8 +248,11 @@ class AuthModuleTestCase(APITestCase):
         self.assertEqual(created.status_code, status.HTTP_201_CREATED)
         self.assertEqual(created.data["author"], supervisor.pk)
         self.assertEqual(created.data["author_role"], "encadreur")
-        self.assertEqual(updated_role.status_code, status.HTTP_200_OK)
-        self.assertEqual(updated_role.data["author_role"], "encadreur")
+        # Un avis est une décision tracée : il ne se modifie plus (405).
+        self.assertEqual(updated_role.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        # L'avis favorable a fait passer le dossier à « valide ».
+        document.folder.refresh_from_db()
+        self.assertEqual(document.folder.status, "valide")
 
     def test_supervisor_ne_voit_que_les_dossiers_et_documents_affectes(self):
         """Un encadreur ne voit que les dossiers et documents qui lui sont affectés."""

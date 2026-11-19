@@ -14,9 +14,9 @@ configuration dangereuse ou incomplète fait échouer le démarrage avec une
 Documentation de référence : https://docs.djangoproject.com/en/stable/ref/settings/
 """
 
+import os
 from datetime import timedelta
 from pathlib import Path
-import os
 from urllib.parse import parse_qs, unquote, urlparse
 
 from django.core.exceptions import ImproperlyConfigured
@@ -240,6 +240,9 @@ MIDDLEWARE = [
     # Sonde /health/ traitée en premier : ni contrôle d'hôte ni redirection
     # HTTPS ne doivent bloquer les vérifications internes de Render/Docker.
     'api.middleware.HealthCheckMiddleware',
+    # Identifiant de requête (X-Request-ID) repris dans les journaux et dans
+    # les réponses d'erreur, pour relier un incident à sa trace serveur.
+    'api.journalisation.RequestIdMiddleware',
     # CORS le plus haut possible, pour répondre aussi aux requêtes préalables
     # (OPTIONS) émises par le navigateur avant chaque appel de Flutter Web.
     'corsheaders.middleware.CorsMiddleware',
@@ -303,6 +306,8 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
 
 # Le CORS ne concerne que l'API ; l'administration Django reste même-origine.
 CORS_URLS_REGEX = r"^/api/.*$"
+# L'application Web peut lire l'identifiant de requête (affiché en cas d'erreur).
+CORS_EXPOSE_HEADERS = ['X-Request-ID']
 
 # Origines de confiance pour les formulaires POST protégés par CSRF (site
 # d'administration servi en HTTPS derrière le proxy de Render).
@@ -327,6 +332,14 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = _env_bool(
     "DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", False
 )
 SECURE_HSTS_PRELOAD = _env_bool("DJANGO_SECURE_HSTS_PRELOAD", False)
+# `check --deploy` signale W005 (sous-domaines) et W021 (préchargement HSTS)
+# tant que ces deux réglages sont désactivés. C'est volontaire : l'API est
+# servie sur un sous-domaine partagé (*.onrender.com) qui ne nous appartient
+# pas ; imposer HSTS à tous ses sous-domaines ou l'inscrire dans la liste de
+# préchargement des navigateurs serait incorrect. Ces deux avertissements
+# sont donc neutralisés, ce qui permet à la CI d'échouer sur tout AUTRE
+# avertissement de déploiement (scripts/ci.sh).
+SILENCED_SYSTEM_CHECKS = ['security.W005', 'security.W021']
 SESSION_COOKIE_SECURE = SECURE_COOKIES
 CSRF_COOKIE_SECURE = SECURE_COOKIES
 
@@ -438,7 +451,8 @@ if not DEBUG and (
     or not DATABASES["default"]["USER"]
 ):
     raise ImproperlyConfigured(
-        "DB_USER doit être défini et DB_PASSWORD doit être un secret personnalisé d'au moins 32 caractères en production."
+        "DB_USER doit être défini et DB_PASSWORD doit être un secret personnalisé "
+        "d'au moins 32 caractères en production."
     )
 # … et ne jamais être le compte administrateur PostgreSQL (moindre privilège).
 if not DEBUG and (
@@ -480,7 +494,24 @@ REST_FRAMEWORK = {
         ('rest_framework.renderers.JSONRenderer',)
         + (('rest_framework.renderers.BrowsableAPIRenderer',) if DEBUG else ())
     ),
+    # Conflits métier en 409 {code, regle, message, request_id} (api/exceptions.py).
+    'EXCEPTION_HANDLER': 'api.exceptions.gestionnaire_exceptions',
+    # Limitation des tentatives de connexion (chapitre 13 : force brute).
+    # SGSUS_LIMITE_CONNEXION : ex. « 10/minute » par adresse IP.
+    'DEFAULT_THROTTLE_RATES': {
+        'connexion': os.getenv('SGSUS_LIMITE_CONNEXION', '10/minute'),
+    },
 }
+
+# -------------------------------------------------------------------------
+# Règles métier paramétrables (documentées dans docs/cahier-des-charges.md)
+# -------------------------------------------------------------------------
+# Fuseau MÉTIER : les dates sont stockées en UTC (NFR04) et affichées, ainsi
+# que les indisponibilités récurrentes interprétées, dans ce fuseau.
+SGSUS_FUSEAU_METIER = os.getenv('SGSUS_FUSEAU_METIER', 'Africa/Bamako')
+# Marge de déplacement (minutes) imposée entre deux soutenances d'une même
+# salle ou d'un même juré (STA02). 0 : deux créneaux jointifs sont acceptés.
+SGSUS_MARGE_MINUTES = _env_int('SGSUS_MARGE_MINUTES', 0, minimum=0)
 
 SIMPLE_JWT = {
     # JWT_ACCESS_TOKEN_MINUTES limite la durée du jeton utilisé sur l'API.
@@ -579,16 +610,19 @@ if (
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    # Une ligne JSON par événement : date, niveau, journal, request_id,
+    # message, code HTTP éventuel (api/journalisation.py).
+    'filters': {
+        'request_id': {'()': 'api.journalisation.FiltreRequestId'},
+    },
     'formatters': {
-        'simple': {
-            'format': '[{asctime}] {levelname} {name} : {message}',
-            'style': '{',
-        },
+        'json': {'()': 'api.journalisation.FormateurJson'},
     },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
-            'formatter': 'simple',
+            'formatter': 'json',
+            'filters': ['request_id'],
         },
     },
     'root': {
@@ -608,6 +642,13 @@ LOGGING = {
         'django.request': {
             'handlers': ['console'],
             'level': 'ERROR',
+            'propagate': False,
+        },
+        # Journal MÉTIER (transitions, publication, approbations), séparé
+        # du journal technique.
+        'sgsus.metier': {
+            'handlers': ['console'],
+            'level': 'INFO',
             'propagate': False,
         },
     },

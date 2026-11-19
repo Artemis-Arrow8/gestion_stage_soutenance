@@ -313,8 +313,8 @@ class _DefenseFormScreenState extends State<DefenseFormScreen> {
   /// Corps du formulaire : deux cartes côte à côte sur grand écran.
   Widget _formulaire() {
     final conflits = _conflitsLocaux;
-    return Form(
-      key: _formKey,
+    return SgFormulaire(
+      formKey: _formKey,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

@@ -25,4 +25,7 @@ FLUTTER_COMMAND="$FLUTTER_HOME/bin/flutter"
 "$FLUTTER_COMMAND" precache --web
 cd "$REPOSITORY_ROOT/frontend"
 "$FLUTTER_COMMAND" pub get
-"$FLUTTER_COMMAND" build web --release --dart-define="API_BASE_URL=$API_BASE_URL"
+# --no-web-resources-cdn : le moteur de rendu (CanvasKit) est servi par le
+# site lui-même et non par le CDN de Google, pour pouvoir être conservé par
+# le service worker (sw_hors_ligne.js) et ouvrir le site hors ligne.
+"$FLUTTER_COMMAND" build web --release --no-web-resources-cdn   --dart-define="API_BASE_URL=$API_BASE_URL"

@@ -6,18 +6,23 @@ d'un jury) sont faits à deux niveaux :
     * applicatif, dans `api.services.conflicts` (messages lisibles) ;
     * base de données, par des contraintes d'exclusion PostgreSQL qui
       protègent contre les écritures concurrentes. Une violation de ces
-      contraintes est traduite ici en erreur HTTP 400 compréhensible.
+      contraintes est traduite ici en conflit métier HTTP 409.
+
+Le cycle de vie des soutenances (confirmer, publier, reporter, annuler,
+marquer comme tenue) est porté par api/services/publication.py.
 """
 
 from datetime import timedelta
 
 from django.db import IntegrityError, transaction
 from django.db.backends.postgresql.psycopg_any import DateTimeTZRange
+from django.db.models import Max, Q
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from api.exceptions import ConflitMetier
 from api.models import Defense, Jury, JuryMember, Room
 from api.permissions import (
     IsAdminOrPedagogicalResponsible,
@@ -29,7 +34,11 @@ from api.serializers import (
     JuryMemberSerializer,
     JurySerializer,
     SalleSerializer,
+    VersionPlanningSerializer,
 )
+from api.services import publication
+from api.services.idempotence import executer_idempotent
+from api.services.jurys import reevaluer_completude
 
 from .helpers import debut_jour_utc, lire_parametre_date
 
@@ -169,6 +178,19 @@ class JuryMemberViewSet(viewsets.ModelViewSet):
             return base.filter(account__user=self.request.user)
         return base
 
+    def perform_update(self, serializer):
+        """Modifie un membre puis réévalue la complétude de son jury (F04)."""
+        ancien_jury = serializer.instance.jury
+        membre = serializer.save()
+        reevaluer_completude(ancien_jury)
+        reevaluer_completude(membre.jury)
+
+    def perform_destroy(self, instance):
+        """Retire un membre ; un jury devenu incomplet perd son statut complet."""
+        jury = instance.jury
+        instance.delete()
+        reevaluer_completude(jury)
+
 
 class DefenseViewSet(viewsets.ModelViewSet):
     """
@@ -183,11 +205,19 @@ class DefenseViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminResponsibleOrAssignedJuryReader]
 
     def get_queryset(self):
-        """Restreint un membre du jury aux soutenances de ses jurys."""
+        """
+        Restreint un membre du jury aux soutenances de ses jurys et ajoute
+        `version_publiee` (version du planning des convocations actives).
+        """
         # `super().get_queryset()` renvoie une COPIE fraîche du queryset de
         # classe : sans elle, le résultat de la première liste resterait en
         # cache dans le processus et les nouvelles lignes seraient invisibles.
-        base = super().get_queryset()
+        base = super().get_queryset().annotate(
+            version_publiee=Max(
+                'convocations__version__numero',
+                filter=Q(convocations__statut='active'),
+            )
+        )
         if get_user_role(self.request.user) == 'jury':
             return base.filter(
                 jury__members__account__user=self.request.user
@@ -217,9 +247,11 @@ class DefenseViewSet(viewsets.ModelViewSet):
                 getattr(cause, 'diag', None), 'constraint_name', None
             )
             if constraint_name in CONTRAINTES_DOUBLE_RESERVATION:
-                raise ValidationError(
-                    {'detail': 'Conflit de réservation : la salle ou le jury '
-                               'est déjà engagé sur ce créneau (EXG01).'}
+                raise ConflitMetier(
+                    'Conflit de réservation : la salle ou le jury est déjà '
+                    'engagé sur ce créneau (EXG01).',
+                    regle='EXG01',
+                    details={'contrainte': constraint_name},
                 ) from error
             raise
 
@@ -230,6 +262,69 @@ class DefenseViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         """Modifie une soutenance avec gestion des conflits."""
         self._enregistrer_soutenance(serializer)
+
+    # --- Cycle de vie (api/services/publication.py) ---------------------
+    # Les écritures sont réservées au personnel (classe de permission) ;
+    # get_object() limite chaque action au périmètre de l'appelant.
+
+    def _repondre(self, soutenance):
+        """Renvoie la soutenance à jour (avec sa version publiée)."""
+        return Response(self.get_serializer(self.get_queryset().get(pk=soutenance.pk)).data)
+
+    @action(detail=True, methods=['post'])
+    def confirmer(self, request, pk=None):
+        """Confirme une soutenance proposée (dossier recevable, jury complet)."""
+        soutenance = self.get_object()
+        return self._repondre(publication.confirmer(soutenance.pk, request.user))
+
+    @action(detail=False, methods=['post'])
+    def publier(self, request):
+        """
+        Publie les soutenances confirmées ou reportées dans une nouvelle
+        version du planning (transaction unique, en-tête Idempotency-Key
+        recommandé). Corps facultatif : {"commentaire": "…"}.
+        """
+        def operation():
+            version = publication.publier(request.user, request.data.get('commentaire', ''))
+            return Response(VersionPlanningSerializer(version).data,
+                            status=status.HTTP_201_CREATED)
+
+        return executer_idempotent(request, 'planning.publier', operation)
+
+    @action(detail=True, methods=['post'])
+    def reporter(self, request, pk=None):
+        """
+        Reporte une soutenance publiée ; corps : slot_start, slot_end,
+        room_name (facultatif), motif. Publie une nouvelle version.
+        """
+        soutenance = self.get_object()
+        debut, fin = request.data.get('slot_start'), request.data.get('slot_end')
+        if not debut or not fin:
+            raise ValidationError({'slot_start': 'Le nouveau créneau (début et fin) est obligatoire.'})
+
+        def operation():
+            version = publication.reporter(
+                soutenance.pk, request.user, debut, fin,
+                request.data.get('room_name') or None, request.data.get('motif', ''),
+            )
+            return Response(VersionPlanningSerializer(version).data,
+                            status=status.HTTP_201_CREATED)
+
+        return executer_idempotent(request, f'planning.reporter.{soutenance.pk}', operation)
+
+    @action(detail=True, methods=['post'])
+    def annuler(self, request, pk=None):
+        """Annule une soutenance (salle et jury libérés, convocations annulées)."""
+        soutenance = self.get_object()
+        return self._repondre(
+            publication.annuler(soutenance.pk, request.user, request.data.get('motif', ''))
+        )
+
+    @action(detail=True, methods=['post'])
+    def tenue(self, request, pk=None):
+        """Enregistre qu'une soutenance publiée a eu lieu."""
+        soutenance = self.get_object()
+        return self._repondre(publication.marquer_tenue(soutenance.pk, request.user))
 
     @action(detail=False, methods=['get'], url_path='planning')
     def planning(self, request):

@@ -1,11 +1,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Les versions distribuées doivent communiquer avec l'API en HTTPS. -->
+    <!-- Les versions distribuées doivent communiquer avec l'API en HTTPS.
+         enableOnBackInvokedCallback : « retour prédictif » d'Android 13+
+         (Samsung One UI) ; pendant le glissement depuis le bord, l'écran
+         suit le doigt et laisse voir l'écran précédent. Flutter reçoit le
+         geste : il ferme l'écran ouvert, et sur l'accueil il demande de
+         refaire le geste avant de quitter l'application. -->
     <application
         android:label="SGSUS"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:enableOnBackInvokedCallback="true"
         android:usesCleartextTraffic="false">
         <activity
             android:name=".MainActivity"

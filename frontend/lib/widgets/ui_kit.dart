@@ -53,11 +53,14 @@ SgTone sgToneForStatus(String s) {
   if (v.contains('attente') ||
       v.contains('occup') ||
       v.contains('cours') ||
-      v.contains('soumis')) {
+      v.contains('soumis') ||
+      v.contains('corriger') ||
+      v.contains('report') ||
+      v.contains('remplac')) {
     return SgTone.warning;
   }
   if (v.contains('planifi')) return SgTone.info;
-  if (v.contains('termin')) return SgTone.gold;
+  if (v.contains('termin') || v.contains('publi')) return SgTone.gold;
   return SgTone.neutral;
 }
 
@@ -67,17 +70,26 @@ SgTone sgToneForStatus(String s) {
 /// table les traduit pour l'affichage. Un statut inconnu est affiché tel
 /// quel, avec une majuscule initiale.
 const Map<String, String> _libellesStatuts = {
-  // Soutenances
-  'planifie': 'Planifiée',
+  // Soutenances (proposée → confirmée → publiée → tenue ; reportée, annulée)
+  'planifie': 'Proposée',
   'confirme': 'Confirmée',
-  'termine': 'Terminée',
+  'publie': 'Publiée',
+  'reporte': 'Reportée',
+  'termine': 'Tenue',
   'annule': 'Annulée',
-  // Dossiers de stage
+  // Dossiers de stage (brouillon → soumis → à corriger | validé → recevable)
   'brouillon': 'Brouillon',
   'soumis': 'Soumis',
+  'a_corriger': 'À corriger',
   'recevable': 'Recevable',
   'valide': 'Validé',
   'rejete': 'Rejeté',
+  // Convocations et procès-verbaux
+  'active': 'Active',
+  'remplacee': 'Remplacée',
+  'annulee': 'Annulée',
+  'approuve': 'Approuvé',
+  'remplace': 'Remplacé',
   // Avis d'encadrement
   'favorable': 'Favorable',
   'defavorable': 'Défavorable',
@@ -1177,6 +1189,106 @@ abstract final class SgToast {
             Expanded(child: Text(message)),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ===========================================================================
+// Formulaire protégé contre le geste « retour »
+// ===========================================================================
+
+/// Formulaire qui protège la saisie contre un geste « retour » accidentel.
+///
+/// S'utilise à la place de [Form] (avec `formKey:` au lieu de `key:`).
+/// * Tant que rien n'a été saisi, le geste « retour » (glissement depuis le
+///   bord de l'écran sur Samsung/Android, bouton retour du navigateur,
+///   toucher en dehors d'une boîte de dialogue) ferme l'écran normalement.
+/// * Dès qu'un champ a été modifié, le même geste ouvre la question
+///   « Quitter sans enregistrer ? » au lieu de fermer : un léger glissement
+///   involontaire ne fait plus perdre ce qui a été tapé.
+/// Les boutons « Annuler » et « Enregistrer », qui ferment explicitement
+/// l'écran avec `Navigator.pop`, ne sont pas concernés.
+class SgFormulaire extends StatefulWidget {
+  /// Crée un formulaire protégé.
+  const SgFormulaire({super.key, required this.formKey, required this.child});
+
+  /// Clé du [Form] interne (validation : `formKey.currentState!.validate()`).
+  final GlobalKey<FormState> formKey;
+
+  /// Champs du formulaire.
+  final Widget child;
+
+  /// Indique que la saisie a été enregistrée alors que le formulaire reste
+  /// affiché (ex. changement de mot de passe) : le geste « retour » ferme de
+  /// nouveau l'écran sans poser de question.
+  ///
+  /// À appeler APRÈS avoir vidé les champs, car vider un champ compte
+  /// comme une modification.
+  static void marquerEnregistre(GlobalKey<FormState> formKey) {
+    formKey.currentContext
+        ?.findAncestorStateOfType<_SgFormulaireState>()
+        ?._reinitialiser();
+  }
+
+  @override
+  State<SgFormulaire> createState() => _SgFormulaireState();
+}
+
+/// État du formulaire protégé : mémorise si une saisie est en cours.
+class _SgFormulaireState extends State<SgFormulaire> {
+  /// Vrai dès qu'un champ a été modifié depuis l'ouverture.
+  bool _modifie = false;
+
+  /// Appelé par le [Form] à chaque modification d'un champ.
+  void _marquerModifie() {
+    if (!_modifie) setState(() => _modifie = true);
+  }
+
+  /// Revient à l'état « rien à enregistrer ».
+  void _reinitialiser() {
+    if (_modifie) setState(() => _modifie = false);
+  }
+
+  /// Demande confirmation, puis ferme l'écran si l'utilisateur le veut.
+  Future<void> _confirmerSortie() async {
+    final quitter = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Quitter sans enregistrer ?'),
+        content: const Text(
+          'Les informations que vous avez saisies seront perdues.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Continuer la saisie'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            child: const Text('Quitter'),
+          ),
+        ],
+      ),
+    );
+    // `Navigator.pop` ferme l'écran sans repasser par la garde.
+    if (quitter == true && mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope<Object?>(
+      // Fermeture libre tant que rien n'a été saisi.
+      canPop: !_modifie,
+      onPopInvokedWithResult: (didPop, _) {
+        // Geste bloqué car une saisie est en cours : on demande.
+        if (!didPop) _confirmerSortie();
+      },
+      child: Form(
+        key: widget.formKey,
+        onChanged: _marquerModifie,
+        child: widget.child,
       ),
     );
   }

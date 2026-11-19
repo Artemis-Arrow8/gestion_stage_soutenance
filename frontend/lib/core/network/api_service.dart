@@ -3,7 +3,8 @@
 /// Toutes les communications avec l'API Django passent par [ApiService] :
 /// construction des URL, en-têtes JSON, jeton JWT, renouvellement
 /// automatique du jeton après une réponse 401, délai d'expiration,
-/// décodage UTF-8 et traduction des erreurs en messages lisibles.
+/// décodage UTF-8, traduction des erreurs en messages lisibles et mode
+/// hors ligne (dernières lectures mémorisées, voir `hors_ligne.dart`).
 ///
 /// Les services métier (planning, administration, documents…) ne
 /// manipulent donc jamais `http` directement : ils décrivent seulement
@@ -12,11 +13,14 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:http/http.dart' as http;
 
 import '../config/app_config.dart';
+import 'hors_ligne.dart';
 
 /// Erreur renvoyée par l'API (ou impossibilité de la joindre).
 ///
@@ -34,6 +38,19 @@ class ApiException implements Exception {
 
   /// Vrai si le serveur a refusé l'authentification (jeton absent/expiré).
   bool get isUnauthorized => statusCode == 401;
+
+  /// Vrai pour un refus par une règle métier (HTTP 409, ex. créneau déjà
+  /// pris, note déjà approuvée, étape sautée).
+  bool get isConflit => statusCode == 409;
+
+  /// Vrai si le serveur n'a pas pu répondre : pas de réseau, délai dépassé
+  /// ou passerelle en erreur (serveur Render en veille ou arrêté). Une
+  /// lecture peut alors se replier sur les données mémorisées.
+  bool get serveurInjoignable =>
+      statusCode == null ||
+      statusCode == 502 ||
+      statusCode == 503 ||
+      statusCode == 504;
 
   @override
   String toString() => message;
@@ -56,18 +73,36 @@ class ApiService {
   /// * [refreshAccessToken] : appelé une fois après un 401 pour renouveler
   ///   le jeton, avant de rejouer la requête.
   /// * [timeout] : délai maximal d'une requête.
+  /// * [cache] : réponses mémorisées pour le mode hors ligne ; par défaut
+  ///   le cache partagé [HorsLigne.cache].
   ApiService({
     http.Client? client,
     String? baseUrl,
     this.accessTokenProvider,
     this.refreshAccessToken,
     Duration? timeout,
+    this.cache,
   }) : _client = client ?? http.Client(),
-       _baseUrl = (baseUrl ?? AppConfig.apiBaseUrl).replaceFirst(
-         RegExp(r'/+$'),
-         '',
-       ),
+       _baseUrl = _resoudreAdresse(baseUrl ?? AppConfig.apiBaseUrl),
        _timeout = timeout ?? AppConfig.httpTimeout;
+
+  /// Normalise l'adresse de l'API : sans barre oblique finale et, si elle
+  /// est relative (`/api`, version PC), complétée par l'adresse de la page.
+  ///
+  /// Une adresse relative permet au même site de fonctionner depuis le PC
+  /// (`http://localhost:8080`) comme depuis un téléphone du même Wi-Fi
+  /// (`http://192.168.x.x:8080`), l'API étant servie à la même adresse.
+  static String _resoudreAdresse(String adresse) {
+    final propre = adresse.replaceFirst(RegExp(r'/+$'), '');
+    if (!propre.startsWith('/')) return propre;
+    return Uri.base.resolve(propre).toString();
+  }
+
+  /// Cache propre à ce client (tests) ; `null` : cache partagé.
+  final CacheReponses? cache;
+
+  /// Cache effectivement utilisé pour le mode hors ligne.
+  CacheReponses get _cacheEffectif => cache ?? HorsLigne.cache;
 
   /// Client HTTP sous-jacent (réel ou simulé).
   final http.Client _client;
@@ -104,12 +139,38 @@ class ApiService {
   }
 
   /// Envoie un objet JSON en POST et retourne la réponse décodée.
+  ///
+  /// [idempotencyKey] (en-tête `Idempotency-Key`) identifie une opération
+  /// logique : si la réponse se perd et que l'on renvoie la même demande
+  /// avec la même clé, le serveur rejoue le résultat sans second effet
+  /// (publication du planning, approbation des notes…). Voir
+  /// [nouvelleCleIdempotence].
   Future<dynamic> post(
     String endpoint,
     Map<String, dynamic>? data, {
     String? accessToken,
+    String? idempotencyKey,
   }) {
-    return _json('POST', endpoint, data: data, accessToken: accessToken);
+    return _json(
+      'POST',
+      endpoint,
+      data: data,
+      accessToken: accessToken,
+      extraHeaders: idempotencyKey == null
+          ? null
+          : {'Idempotency-Key': idempotencyKey},
+    );
+  }
+
+  /// Nouvelle clé d'idempotence aléatoire (32 caractères hexadécimaux),
+  /// à générer UNE fois par action de l'utilisateur et à réutiliser pour
+  /// une nouvelle tentative de la même action.
+  static String nouvelleCleIdempotence() {
+    final aleatoire = Random.secure();
+    return List.generate(
+      16,
+      (_) => aleatoire.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
   }
 
   /// Envoie une modification partielle (PATCH) et retourne la réponse décodée.
@@ -119,6 +180,11 @@ class ApiService {
     String? accessToken,
   }) {
     return _json('PATCH', endpoint, data: data, accessToken: accessToken);
+  }
+
+  /// Remplace une ressource (PUT) et retourne la réponse décodée.
+  Future<dynamic> put(String endpoint, Map<String, dynamic> data) {
+    return _json('PUT', endpoint, data: data);
   }
 
   /// Supprime une ressource (DELETE).
@@ -217,20 +283,74 @@ class ApiService {
   // ---------------------------------------------------------------------
 
   /// Exécute une requête JSON complète et retourne le corps décodé.
+  ///
+  /// Mode hors ligne : une lecture (GET) réussie est mémorisée ; si le
+  /// serveur est injoignable, une lecture renvoie la dernière réponse
+  /// mémorisée pour la même adresse et l'interface affiche le bandeau
+  /// « Mode hors ligne ». Les écritures échouent avec un message clair.
   Future<dynamic> _json(
     String method,
     String endpoint, {
     Map<String, String>? query,
     Map<String, dynamic>? data,
     String? accessToken,
+    Map<String, String>? extraHeaders,
   }) async {
-    final response = await _send((token) {
-      final request = http.Request(method, buildUri(endpoint, query: query));
-      _applyHeaders(request.headers, token: token, json: data != null);
-      if (data != null) request.body = jsonEncode(data);
-      return request;
-    }, accessToken: accessToken);
-    return _decodeSuccess(response);
+    final uri = buildUri(endpoint, query: query);
+    final lecture = method == 'GET';
+    final http.Response response;
+    try {
+      response = await _send((token) {
+        final request = http.Request(method, uri);
+        _applyHeaders(request.headers, token: token, json: data != null);
+        if (extraHeaders != null) request.headers.addAll(extraHeaders);
+        if (data != null) request.body = jsonEncode(data);
+        return request;
+      }, accessToken: accessToken);
+    } on ApiException catch (error) {
+      // Lecture impossible faute de serveur : on cherche une copie locale.
+      if (lecture && error.serveurInjoignable) {
+        final memo = await _lireCache(uri);
+        if (memo != null) {
+          HorsLigne.signalerCache(memo.date);
+          return _decodeTexte(memo.corps);
+        }
+      }
+      // Aucun réseau : le bandeau « Mode hors ligne » s'affiche.
+      if (error.statusCode == null) HorsLigne.signalerInjoignable();
+      rethrow;
+    }
+
+    // Le serveur a répondu : fin du mode hors ligne éventuel.
+    HorsLigne.signalerConnecte();
+    final texte = response.bodyBytes.isEmpty ? '' : _bodyText(response);
+    final resultat = _decodeTexte(texte);
+    // Mémorisation sans attendre : l'affichage n'est pas ralenti.
+    if (lecture && texte.isNotEmpty) unawaited(_ecrireCache(uri, texte));
+    return resultat;
+  }
+
+  /// Lit la copie locale d'une réponse ; `null` si absente ou illisible.
+  Future<ReponseMemorisee?> _lireCache(Uri uri) async {
+    try {
+      return await _cacheEffectif
+          .lire(uri.toString())
+          .timeout(HorsLigne.delaiStockage);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Mémorise une réponse ; une erreur de stockage (espace plein,
+  /// navigation privée…) est ignorée : le mode hors ligne est un bonus.
+  Future<void> _ecrireCache(Uri uri, String texte) async {
+    try {
+      await _cacheEffectif
+          .ecrire(uri.toString(), texte)
+          .timeout(HorsLigne.delaiStockage);
+    } catch (_) {
+      // Rien à faire : la réponse a déjà été transmise à l'écran.
+    }
   }
 
   /// Ajoute les en-têtes communs : format JSON et jeton Bearer éventuel.
@@ -292,11 +412,12 @@ class ApiService {
         'réessayez dans quelques instants.',
       );
     } on http.ClientException catch (error) {
-      // Sur le Web, un refus CORS apparaît aussi sous cette forme.
+      // Pas de réseau, serveur arrêté, ou (sur le Web) refus CORS. Le
+      // détail technique n'est affiché qu'en mode développement.
       throw ApiException(
-        'Impossible de joindre le serveur API ($_baseUrl). Vérifiez votre '
-        'connexion, l’adresse de l’API et son autorisation CORS. '
-        '(${error.message})',
+        'Connexion au serveur impossible : vous êtes peut-être hors ligne. '
+        'Vérifiez votre connexion Internet puis réessayez.'
+        '${kDebugMode ? ' ($_baseUrl : ${error.message})' : ''}',
       );
     }
   }
@@ -317,10 +438,17 @@ class ApiService {
 
   /// Décode le corps d'une réponse réussie : objet, liste ou objet vide.
   dynamic _decodeSuccess(http.Response response) {
-    if (response.bodyBytes.isEmpty) return <String, dynamic>{};
+    return _decodeTexte(
+      response.bodyBytes.isEmpty ? '' : _bodyText(response),
+    );
+  }
+
+  /// Décode un corps JSON (reçu ou mémorisé) : objet, liste ou objet vide.
+  dynamic _decodeTexte(String texte) {
+    if (texte.isEmpty) return <String, dynamic>{};
     final dynamic body;
     try {
-      body = jsonDecode(_bodyText(response));
+      body = jsonDecode(texte);
     } on FormatException {
       throw const FormatException(
         'Le serveur a renvoyé une réponse JSON invalide.',
@@ -347,6 +475,22 @@ class ApiService {
   /// de SimpleJWT, avec un repli selon le code HTTP.
   String _errorMessage(dynamic body, int statusCode) {
     if (body is Map) {
+      // Conflit métier (409) : {code, regle, message, request_id, details}.
+      // On affiche le message et, s'il y en a, la liste des problèmes
+      // (publication refusée), avec la référence de la requête.
+      final messageMetier = body['message'];
+      if (messageMetier is String && messageMetier.isNotEmpty) {
+        final details = body['details'];
+        final problemes = details is Map && details['problemes'] is List
+            ? (details['problemes'] as List).map((p) => '• $p').join('\n')
+            : '';
+        final reference = body['request_id'];
+        return [
+          messageMetier,
+          if (problemes.isNotEmpty) problemes,
+          if (reference is String && reference != '-') '(Réf. $reference)',
+        ].join('\n');
+      }
       // Clés prioritaires utilisées par l'API et par DRF.
       for (final key in const ['error', 'detail', 'non_field_errors']) {
         final message = _flatten(body[key]);

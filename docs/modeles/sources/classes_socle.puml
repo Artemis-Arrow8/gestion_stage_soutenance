@@ -1,0 +1,77 @@
+@startuml classes_socle
+class InternshipFolder
+class DocumentVersion
+class Defense
+class Assessment
+class Campaign
+class "User (compte)" as User
+class HistoriqueDossier {
+  evenement
+  statut_avant / statut_apres
+  motif
+  created_at
+}
+class ConfidentialiteDossier {
+  niveau : standard | confidentiel
+  origine
+  embargo_jusqu_au
+  diffusion_autorisee
+}
+class HabilitationDossier {
+  valide_du / valide_au
+  revoquee
+}
+class JournalAccesDocument {
+  version_document_id
+  autorise
+  motif
+}
+class GrilleEvaluation {
+  version
+  poids_rapport (0,400)
+  poids_oral (0,600)
+  note_maximale (20)
+}
+class ProcesVerbal {
+  version
+  note_rapport / note_oral / moyenne
+  membres_jury (copie)
+  statut : approuve | remplace
+  motif
+}
+class VersionPlanning {
+  numero
+  publiee_le
+}
+class Convocation {
+  destinataire / role
+  debut / fin / salle (copie)
+  statut : active | remplacee | annulee
+  notification
+}
+class Indisponibilite {
+  type_ressource / ressource
+  jour_semaine / heures
+  fuseau / période
+}
+class ExceptionIndisponibilite {
+  date
+}
+class CleIdempotence {
+  cle / perimetre
+  empreinte SHA-256
+  reponse
+}
+InternshipFolder "1" -- "0..*" HistoriqueDossier
+HistoriqueDossier "0..*" --> "0..1" DocumentVersion : version examinée
+InternshipFolder "1" -- "0..1" ConfidentialiteDossier
+InternshipFolder "1" -- "0..*" HabilitationDossier
+HabilitationDossier "0..*" --> "1" User : bénéficiaire
+Campaign "1" -- "1..*" GrilleEvaluation
+Assessment "1" -- "0..*" ProcesVerbal
+ProcesVerbal "0..*" --> "1" GrilleEvaluation : version figée
+VersionPlanning "1" -- "1..*" Convocation
+Defense "1" -- "0..*" Convocation
+Convocation "0..1" --> "0..1" Convocation : remplacee_par
+Indisponibilite "1" -- "0..*" ExceptionIndisponibilite
+@enduml

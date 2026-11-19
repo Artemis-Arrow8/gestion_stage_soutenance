@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../core/network/api_service.dart';
+import '../core/network/hors_ligne.dart';
 import '../core/storage/auth_storage.dart';
 import '../services/auth_service.dart';
 import 'planning_store.dart';
@@ -113,6 +114,11 @@ class AuthProvider extends ChangeNotifier {
   /// Si le jeton d'accès a expiré, il est renouvelé une fois avant de
   /// recharger le profil. En cas d'échec, la session locale est effacée et
   /// l'utilisateur retrouve l'écran de connexion.
+  ///
+  /// Hors ligne, le profil mémorisé lors de la dernière connexion est
+  /// utilisé (voir `hors_ligne.dart`) : l'application s'ouvre directement.
+  /// S'il n'existe pas encore, la session enregistrée est conservée pour
+  /// la prochaine ouverture avec une connexion.
   Future<void> restoreSession() async {
     _isRestoring = true;
     _errorMessage = null;
@@ -131,7 +137,15 @@ class AuthProvider extends ChangeNotifier {
       }
     } on ApiException catch (error) {
       _errorMessage = error.message;
-      await clearSession();
+      if (error.serveurInjoignable) {
+        // Serveur injoignable : on n'efface rien sur l'appareil, mais la
+        // session ne peut pas s'ouvrir sans profil.
+        _accessToken = null;
+        _refreshToken = null;
+        _user = null;
+      } else {
+        await clearSession();
+      }
     } on FormatException catch (error) {
       _errorMessage = error.message;
       await clearSession();
@@ -195,7 +209,8 @@ class AuthProvider extends ChangeNotifier {
   /// Les appels simultanés partagent la même requête : avec la rotation et
   /// la liste noire activées côté serveur, deux renouvellements parallèles
   /// invalideraient sinon la session. Retourne `true` en cas de succès ;
-  /// en cas d'échec, la session est fermée.
+  /// en cas de refus du serveur, la session est fermée. Si le serveur est
+  /// simplement injoignable (hors ligne), la session est conservée.
   Future<bool> refreshAccessToken() {
     return _pendingRefresh ??= _doRefresh().whenComplete(() {
       _pendingRefresh = null;
@@ -256,13 +271,15 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Efface jetons, profil et données de planning en mémoire et sur disque.
+  /// Efface jetons, profil, planning et données hors ligne (mémoire et disque).
   Future<void> clearSession() async {
     _accessToken = null;
     _refreshToken = null;
     _user = null;
-    // Les données métier de la session précédente ne doivent pas subsister.
+    // Les données métier de la session précédente ne doivent pas subsister,
+    // ni en mémoire, ni dans le cache hors ligne de l'appareil.
     PlanningStore.clear();
+    await HorsLigne.effacer();
     await _storage.clearTokens();
   }
 
@@ -311,12 +328,18 @@ class AuthProvider extends ChangeNotifier {
       return true;
     } on ApiException catch (error) {
       _errorMessage = error.message;
+      // Hors ligne : les jetons restent valables côté serveur ; on les
+      // garde pour réessayer quand la connexion reviendra.
+      if (error.serveurInjoignable) {
+        notifyListeners();
+        return false;
+      }
     } on FormatException catch (error) {
       _errorMessage = error.message;
     } catch (_) {
       _errorMessage = 'Impossible de renouveler la session.';
     }
-    // Tout échec ferme la session : l'utilisateur doit se reconnecter.
+    // Refus du serveur : l'utilisateur doit se reconnecter.
     await clearSession();
     notifyListeners();
     return false;

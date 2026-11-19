@@ -1,6 +1,7 @@
 /// Fiche détaillée d'une soutenance : étudiant, créneau, salle, jury et
-/// accès aux documents du dossier. Le personnel peut aussi y changer le
-/// statut de la soutenance (confirmée, terminée, annulée…) ou la supprimer.
+/// accès aux documents du dossier. Le personnel y fait évoluer la
+/// soutenance selon son cycle de vie (confirmer, reporter, marquer comme
+/// tenue, annuler) et consulte ses convocations par version du planning.
 library;
 
 import 'package:material_ui/material_ui.dart';
@@ -141,7 +142,7 @@ class DefenseDetailScreen extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              SgBadge(defense.status, tone: sgToneForStatus(defense.status)),
+              SgStatusBadge(defense.status),
               SgBadge(
                 d == null ? 'Date invalide' : shortDate(d),
                 tone: SgTone.gold,
@@ -303,11 +304,20 @@ class DefenseDetailScreen extends StatelessWidget {
   }
 }
 
-/// Statuts possibles d'une soutenance, dans leur ordre logique.
-const _statutsSoutenance = ['planifie', 'confirme', 'termine', 'annule'];
-
-/// Carte de gestion d'une soutenance (personnel) : changement de statut
-/// et suppression définitive.
+/// Carte de gestion d'une soutenance (personnel) selon son cycle de vie
+/// (F04, F05) : le statut ne se choisit pas librement, il évolue par des
+/// actions contrôlées par le serveur.
+///
+/// * proposée : confirmer (dossier recevable et jury complet exigés) ou
+///   supprimer ;
+/// * confirmée : en attente de publication (bouton « Publier le planning »
+///   de l'écran Planning) ;
+/// * publiée : reporter (nouvelle version du planning et nouvelles
+///   convocations), marquer comme tenue ou annuler ;
+/// * tenue / annulée : plus aucune action.
+///
+/// La liste des convocations montre les versions successives : une
+/// convocation remplacée par un report reste visible (STA07).
 class _GestionSoutenance extends StatefulWidget {
   const _GestionSoutenance({required this.defense});
 
@@ -318,36 +328,50 @@ class _GestionSoutenance extends StatefulWidget {
   State<_GestionSoutenance> createState() => _GestionSoutenanceState();
 }
 
-/// État de la carte : opération en cours.
+/// État de la carte : opération en cours et convocations chargées.
 class _GestionSoutenanceState extends State<_GestionSoutenance> {
   /// Vrai pendant un appel au serveur (boutons désactivés).
   bool _occupe = false;
+
+  /// Convocations de la soutenance (toutes versions).
+  late Future<List<Map<String, dynamic>>> _convocations;
 
   /// Service de planification construit à partir de la session.
   PlanningService get _service =>
       PlanningService(context.read<AuthProvider>().api);
 
-  /// Recharge le planning partagé (non bloquant en cas d'erreur).
-  Future<void> _rafraichirPlanning() async {
-    try {
-      await PlanningStore.refresh(_service);
-    } catch (_) {
-      // Erreur publiée dans PlanningStore.error.
-    }
+  @override
+  void initState() {
+    super.initState();
+    _convocations = _service.convocations(soutenance: widget.defense.id);
   }
 
-  /// Change le statut puis rouvre la fiche avec le statut à jour.
-  Future<void> _changerStatut(String statut) async {
+  /// Exécute une action, rafraîchit le planning et rouvre la fiche à jour.
+  Future<void> _executer(
+    Future<void> Function() action,
+    String succes, {
+    bool fermer = false,
+  }) async {
     setState(() => _occupe = true);
     try {
-      await _service.updateDefenseStatus(widget.defense.id, statut);
-      await _rafraichirPlanning();
+      await action();
+      try {
+        await PlanningStore.refresh(_service);
+      } catch (_) {
+        // Erreur publiée dans PlanningStore.error.
+      }
       if (!mounted) return;
-      SgToast.show(context, 'Soutenance : ${libelleStatut(statut)}.');
-      await replacePage(
-        context,
-        DefenseDetailScreen(defense: widget.defense.copier(status: statut)),
+      SgToast.show(context, succes);
+      if (fermer) {
+        Navigator.of(context).pop();
+        return;
+      }
+      // Fiche rouverte avec la version à jour issue du planning rechargé.
+      final ajour = PlanningStore.defenses.value.firstWhere(
+        (d) => d.id == widget.defense.id,
+        orElse: () => widget.defense,
       );
+      await replacePage(context, DefenseDetailScreen(defense: ajour));
     } on ApiException catch (e) {
       if (mounted) {
         setState(() => _occupe = false);
@@ -356,21 +380,78 @@ class _GestionSoutenanceState extends State<_GestionSoutenance> {
     }
   }
 
-  /// Demande confirmation puis supprime la soutenance.
+  /// Demande un motif (annulation) ; null si l'utilisateur renonce.
+  Future<String?> _demanderMotif(String titre) {
+    final controleur = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(titre),
+        content: TextField(
+          controller: controleur,
+          autofocus: true,
+          maxLines: 2,
+          decoration: const InputDecoration(labelText: 'Motif'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Retour'),
+          ),
+          SgButton(
+            'Valider',
+            onPressed: () => Navigator.pop(ctx, controleur.text.trim()),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Annule la soutenance après confirmation et motif.
+  Future<void> _annuler() async {
+    final motif = await _demanderMotif('Annuler la soutenance');
+    if (motif == null || !mounted) return;
+    await _executer(
+      () => _service.annuler(widget.defense.id, motif: motif),
+      'Soutenance annulée : salle et jury libérés.',
+    );
+  }
+
+  /// Ouvre la boîte de report puis publie une nouvelle version.
+  Future<void> _reporter() async {
+    final saisie = await showDialog<_Report>(
+      context: context,
+      builder: (_) => _ReportDialog(defense: widget.defense),
+    );
+    if (saisie == null || !mounted) return;
+    // Une clé par action : une relance après coupure ne publie pas deux fois.
+    final cle = ApiService.nouvelleCleIdempotence();
+    await _executer(
+      () => _service.reporter(
+        widget.defense.id,
+        debut: saisie.debut,
+        fin: saisie.fin,
+        motif: saisie.motif,
+        cle: cle,
+      ),
+      'Soutenance reportée : nouvelle version du planning publiée.',
+    );
+  }
+
+  /// Demande confirmation puis supprime une soutenance non publiée.
   Future<void> _supprimer() async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Supprimer la soutenance'),
         content: Text(
-          'Supprimer définitivement la soutenance de '
-          '${widget.defense.studentName} ? Son évaluation éventuelle sera '
-          'également supprimée.',
+          'Supprimer définitivement la soutenance proposée de '
+          '${widget.defense.studentName} ?',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Annuler'),
+            child: const Text('Retour'),
           ),
           SgButton(
             'Supprimer',
@@ -381,58 +462,264 @@ class _GestionSoutenanceState extends State<_GestionSoutenance> {
       ),
     );
     if (ok != true || !mounted) return;
-    setState(() => _occupe = true);
-    try {
-      await _service.deleteDefense(widget.defense.id);
-      await _rafraichirPlanning();
-      if (!mounted) return;
-      SgToast.show(context, 'Soutenance supprimée.');
-      Navigator.of(context).pop();
-    } on ApiException catch (e) {
-      if (mounted) {
-        setState(() => _occupe = false);
-        SgToast.show(context, e.message, tone: SgTone.danger);
-      }
-    }
+    await _executer(
+      () => _service.deleteDefense(widget.defense.id),
+      'Soutenance supprimée.',
+      fermer: true,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final statut = widget.defense.status;
+    final explication = switch (statut) {
+      'planifie' =>
+        'Proposée : la confirmation exige un dossier recevable et un jury complet.',
+      'confirme' =>
+        'Confirmée : elle sera publiée avec le planning (écran Planning, '
+            '« Publier le planning »).',
+      'publie' =>
+        'Publiée (version ${widget.defense.versionPubliee ?? '?'}) : les '
+            'participants sont convoqués. Un changement passe par un report.',
+      'termine' => 'Tenue : la soutenance a eu lieu.',
+      'annule' => 'Annulée : salle et jury sont libérés.',
+      _ => 'Statut : ${libelleStatut(statut)}.',
+    };
     return SgCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SgOverline('Gestion de la soutenance'),
-          const SizedBox(height: 12),
-          const Text(
-            'Statut',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          const SizedBox(height: 10),
+          Text(
+            explication,
+            style: const TextStyle(fontSize: 13, color: AppColors.grey, height: 1.45),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 14),
           Wrap(
-            spacing: 8,
-            runSpacing: 8,
+            spacing: 10,
+            runSpacing: 10,
             children: [
-              for (final s in _statutsSoutenance)
-                SgChip(
-                  label: libelleStatut(s),
-                  selected: widget.defense.status == s,
-                  onTap: _occupe || widget.defense.status == s
+              if (statut == 'planifie')
+                SgButton(
+                  'Confirmer',
+                  icon: Icons.check_circle_outline_rounded,
+                  variant: SgBtnVariant.dark,
+                  dense: true,
+                  onPressed: _occupe
                       ? null
-                      : () => _changerStatut(s),
+                      : () => _executer(
+                          () => _service.confirmer(widget.defense.id),
+                          'Soutenance confirmée.',
+                        ),
+                ),
+              if (statut == 'publie') ...[
+                SgButton(
+                  'Reporter',
+                  icon: Icons.event_repeat_rounded,
+                  variant: SgBtnVariant.dark,
+                  dense: true,
+                  onPressed: _occupe ? null : _reporter,
+                ),
+                SgButton(
+                  'Marquer comme tenue',
+                  icon: Icons.task_alt_rounded,
+                  variant: SgBtnVariant.outline,
+                  dense: true,
+                  onPressed: _occupe
+                      ? null
+                      : () => _executer(
+                          () => _service.marquerTenue(widget.defense.id),
+                          'Soutenance marquée comme tenue.',
+                        ),
+                ),
+              ],
+              if (const {'planifie', 'confirme', 'publie', 'reporte'}.contains(statut))
+                SgButton(
+                  'Annuler la soutenance',
+                  icon: Icons.event_busy_rounded,
+                  variant: SgBtnVariant.outline,
+                  dense: true,
+                  onPressed: _occupe ? null : _annuler,
+                ),
+              if (statut == 'planifie')
+                SgButton(
+                  'Supprimer',
+                  icon: Icons.delete_outline_rounded,
+                  variant: SgBtnVariant.danger,
+                  dense: true,
+                  onPressed: _occupe ? null : _supprimer,
                 ),
             ],
           ),
-          const SizedBox(height: 16),
-          SgButton(
-            'Supprimer la soutenance',
-            icon: Icons.delete_outline_rounded,
-            variant: SgBtnVariant.danger,
-            dense: true,
-            onPressed: _occupe ? null : _supprimer,
+          const SizedBox(height: 18),
+          const SgOverline('Convocations'),
+          const SizedBox(height: 10),
+          FutureBuilder<List<Map<String, dynamic>>>(
+            future: _convocations,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const SgLoading();
+              }
+              final liste = snapshot.data ?? const [];
+              if (liste.isEmpty) {
+                return const Text(
+                  'Aucune convocation : la soutenance n’a pas encore été publiée.',
+                  style: TextStyle(fontSize: 12.5, color: AppColors.grey),
+                );
+              }
+              return Column(
+                children: [
+                  for (final c in liste)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        children: [
+                          SgBadge('v${c['version']}', tone: SgTone.gold, dot: false),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '${c['destinataire']} · ${c['role_destinataire']}',
+                              style: const TextStyle(fontSize: 12.5),
+                            ),
+                          ),
+                          SgStatusBadge(c['statut']?.toString() ?? ''),
+                        ],
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Saisie d'un report : nouveau créneau et motif.
+class _Report {
+  const _Report(this.debut, this.fin, this.motif);
+
+  /// Début et fin du nouveau créneau (heure locale).
+  final DateTime debut;
+  final DateTime fin;
+
+  /// Motif du report (obligatoire).
+  final String motif;
+}
+
+/// Boîte de dialogue de report : date, heure de début, durée conservée.
+class _ReportDialog extends StatefulWidget {
+  const _ReportDialog({required this.defense});
+
+  /// Soutenance reportée (sa durée est conservée).
+  final Defense defense;
+
+  @override
+  State<_ReportDialog> createState() => _ReportDialogState();
+}
+
+/// État de la boîte de report.
+class _ReportDialogState extends State<_ReportDialog> {
+  late DateTime _jour;
+  late TimeOfDay _heure;
+  final TextEditingController _motif = TextEditingController();
+
+  /// Durée actuelle de la soutenance, conservée par le report.
+  late Duration _duree;
+
+  @override
+  void initState() {
+    super.initState();
+    _jour = parseDefenseDate(widget.defense.date) ?? DateTime.now();
+    TimeOfDay lire(String hhmm) {
+      final p = hhmm.split(':');
+      return TimeOfDay(
+        hour: int.tryParse(p.first) ?? 9,
+        minute: p.length > 1 ? int.tryParse(p[1]) ?? 0 : 0,
+      );
+    }
+
+    _heure = lire(widget.defense.startTime);
+    final fin = lire(widget.defense.endTime);
+    final minutes = (fin.hour * 60 + fin.minute) - (_heure.hour * 60 + _heure.minute);
+    _duree = Duration(minutes: minutes > 0 ? minutes : 60);
+  }
+
+  @override
+  void dispose() {
+    _motif.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Reporter la soutenance'),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Une nouvelle version du planning sera publiée ; les anciennes '
+              'convocations resteront visibles, marquées « remplacées ».',
+              style: TextStyle(fontSize: 12.5, color: AppColors.grey, height: 1.4),
+            ),
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.calendar_month_rounded, size: 18),
+              label: Text('Date : ${shortDate(_jour)}'),
+              onPressed: () async {
+                final choix = await showDatePicker(
+                  context: context,
+                  initialDate: _jour,
+                  firstDate: DateTime.now().subtract(const Duration(days: 1)),
+                  lastDate: DateTime.now().add(const Duration(days: 730)),
+                );
+                if (choix != null) setState(() => _jour = choix);
+              },
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.schedule_rounded, size: 18),
+              label: Text(
+                'Début : ${_heure.format(context)} '
+                '(durée ${_duree.inMinutes} min)',
+              ),
+              onPressed: () async {
+                final choix = await showTimePicker(context: context, initialTime: _heure);
+                if (choix != null) setState(() => _heure = choix);
+              },
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _motif,
+              maxLines: 2,
+              decoration: const InputDecoration(labelText: 'Motif du report (obligatoire)'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Retour')),
+        SgButton(
+          'Reporter et publier',
+          onPressed: () {
+            final motif = _motif.text.trim();
+            if (motif.isEmpty) {
+              SgToast.show(context, 'Le motif est obligatoire.', tone: SgTone.danger);
+              return;
+            }
+            final debut = DateTime(
+              _jour.year, _jour.month, _jour.day, _heure.hour, _heure.minute,
+            );
+            Navigator.pop(context, _Report(debut, debut.add(_duree), motif));
+          },
+        ),
+      ],
     );
   }
 }
