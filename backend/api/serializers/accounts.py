@@ -153,7 +153,7 @@ class UserAccountSerializer(serializers.ModelSerializer):
         if instance is not None:
             if instance.is_superuser and role != 'admin':
                 raise serializers.ValidationError(
-                    {'role': 'Le rôle d’un superutilisateur ne peut pas être modifié.'}
+                    {'role': 'Le rôle d un superutilisateur ne peut pas être modifié.'}
                 )
             if instance.is_superuser and attrs.get('is_active') is False:
                 raise serializers.ValidationError(

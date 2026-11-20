@@ -96,6 +96,98 @@ void main() {
     // Rien à envoyer ni à lire tant qu'aucun rapport n'est déposé.
     expect(find.text('Envoyer à mon encadreur'), findsNothing);
     expect(find.textContaining('Lire le rapport'), findsNothing);
+    // Le bouton de dépôt n'est pas répété en double.
+    expect(find.text('Déposer une nouvelle version'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('étudiant : déposer reste visible, versions et stage sont séparés', (
+    WidgetTester tester,
+  ) async {
+    final serveur = _Serveur(role: 'student', statut: 'soumis', version: 1);
+    await _ouvrir(tester, serveur);
+    await _toucher(tester, 'Mon dossier et mes documents');
+
+    // 1. Où en est le rapport, avec le dépôt TOUJOURS à portée de main
+    //    (sans passer par « Modifier » ni ouvrir un panneau).
+    expect(find.text('Rapport envoyé'), findsOneWidget);
+    expect(find.text('Déposer une nouvelle version'), findsOneWidget);
+    expect(find.text('Relire mon rapport (version 1)'), findsOneWidget);
+
+    // 2. Ses rapports déposés, avec ce qu'en fait l'encadreur.
+    expect(find.text('Mes rapports déposés'), findsOneWidget);
+    expect(find.text('Version 1 · la plus récente'), findsOneWidget);
+    expect(find.text('Votre encadreur est en train de la lire'), findsOneWidget);
+
+    // 3. L'historique, en mots simples.
+    expect(find.text('Rapport envoyé à l’encadreur'), findsOneWidget);
+
+    // 4. Son stage, modifiable à part, avec un bouton sans ambiguïté.
+    expect(find.text('Mon stage'), findsOneWidget);
+    expect(find.text('Modifier l’entreprise ou le sujet'), findsOneWidget);
+    expect(find.text('Modifier'), findsNothing);
+
+    // Déposer pendant la lecture de l'encadreur : on prévient d'abord.
+    await _toucher(tester, 'Déposer une nouvelle version');
+    expect(find.text('Déposer une nouvelle version ?'), findsOneWidget);
+    expect(find.textContaining('à la place de l’ancienne'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('encadreur : la page complète du dossier est une vraie page', (
+    WidgetTester tester,
+  ) async {
+    final serveur = _Serveur(role: 'supervisor', statut: 'soumis', version: 2);
+    await _ouvrir(tester, serveur);
+    await _toucher(tester, 'Examiner les rapports');
+
+    await _toucher(tester, 'Ouvrir le dossier complet');
+    // Pas de panneau flottant : une page avec le nom en titre.
+    expect(find.byType(BottomSheet), findsNothing);
+    expect(find.text('Versions du rapport'), findsOneWidget);
+    expect(find.text('Version 2 · la plus récente'), findsOneWidget);
+    // L'encadreur lit la situation dans SES mots.
+    expect(find.text('En attente de votre avis'), findsOneWidget);
+    expect(find.text('Historique'), findsOneWidget);
+
+    // Décider depuis la page : elle se ferme et la confirmation s'ouvre.
+    await _toucher(tester, 'Accepter le rapport');
+    expect(find.text('Accepter le rapport ?'), findsOneWidget);
+    await tester.tap(find.text('Accepter'));
+    await tester.pumpAndSettle();
+
+    final (chemin, corps) = serveur.ecritures.single;
+    expect(chemin, '/api/reviews/');
+    expect(corps['decision'], 'favorable');
+    expect(find.text('Versions du rapport'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('jury : « Rapports à lire », la date et un seul bouton', (
+    WidgetTester tester,
+  ) async {
+    final serveur = _Serveur(role: 'jury', statut: 'recevable', version: 1);
+    await _ouvrir(tester, serveur);
+
+    // L'accueil annonce les rapports à lire.
+    expect(find.text('1 rapport(s) à lire avant la soutenance'), findsOneWidget);
+    await _toucher(tester, '1 rapport(s) à lire avant la soutenance');
+
+    expect(find.text('Awa Traoré'), findsOneWidget);
+    expect(find.textContaining('Soutenance :'), findsOneWidget);
+    expect(find.textContaining('Salle 101'), findsOneWidget);
+    expect(find.text('Rapport à lire'), findsOneWidget);
+    expect(find.text('Lire le rapport (version 1)'), findsOneWidget);
+    // Le jury lit ; il ne décide rien sur le dossier.
+    for (final decision in [
+      'Accepter le rapport',
+      'Demander des corrections',
+      'Autoriser la soutenance',
+      'Refuser le dossier',
+      'Ouvrir le dossier complet',
+    ]) {
+      expect(find.text(decision), findsNothing);
+    }
     expect(tester.takeException(), isNull);
   });
 }
@@ -171,18 +263,60 @@ class _Serveur {
     'derniere_etape': null,
   };
 
+  /// Versions déposées du dossier n° 5.
+  List<Map<String, dynamic>> get _versions => [
+    for (var n = 1; n <= (version ?? 0); n++)
+      {'id': 70 + n, 'folder': 5, 'version_number': n, 'uploaded_at': '2026-11-1${n}T10:00:00Z'},
+  ];
+
+  /// Historique : l'envoi à l'encadreur, dès que le dossier est soumis.
+  List<Map<String, dynamic>> get _historique => [
+    if (statut != 'brouillon')
+      {
+        'evenement': 'soumettre',
+        'statut_avant': 'brouillon',
+        'statut_apres': 'soumis',
+        'created_at': '2026-11-12T10:05:00Z',
+        'acteur_nom': 'Awa Traoré',
+        'motif': '',
+      },
+  ];
+
+  /// Soutenances : une seule, celle du dossier n° 5, pour le jury.
+  Map<String, dynamic> get _planning => {
+    'total': role == 'jury' ? 1 : 0,
+    'soutenances': [
+      if (role == 'jury')
+        {
+          'id': 9,
+          'folder': 5,
+          'student_name': 'Awa Traoré',
+          'subject': 'Application de suivi',
+          'slot_start': '2030-11-25T09:00:00',
+          'slot_end': '2030-11-25T10:00:00',
+          'room_name': 'Salle 101',
+          'jury_name': 'Jury A',
+          'status': 'planifie',
+        },
+    ],
+  };
+
   Future<http.Response> _repondre(http.Request requete) async {
     final chemin = requete.url.path;
-    if (requete.method == 'POST' && !chemin.endsWith('/login/')) {
+    final ecriture = requete.method == 'POST' && !chemin.endsWith('/login/');
+    if (ecriture) {
       ecritures.add((chemin, requete.body.isEmpty ? {} : jsonDecode(requete.body) as Map<String, dynamic>));
     }
     final Object? corps = switch (chemin) {
       '/api/login/' => {'access': 'a', 'refresh': 'r', 'user': _profil},
       '/api/profile/' => {'user': _profil},
       '/api/internship-folders/' => [_dossier],
+      '/api/document-versions/' => _versions,
+      '/api/internship-folders/5/historique/' => _historique,
+      '/api/reviews/' when !ecriture => <Object>[],
       '/api/reviews/' => {'id': 1, 'decision': 'defavorable'},
       '/api/internship-folders/5/autoriser/' => _dossier,
-      '/api/soutenances/planning/' => {'total': 0, 'soutenances': []},
+      '/api/soutenances/planning/' => _planning,
       '/api/salles/' || '/api/jurys/' => [],
       _ => null,
     };

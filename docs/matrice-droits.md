@@ -15,7 +15,7 @@ Légende :
 |---|---|---|---|---|---|---|
 | Comptes et rôles | ✔ | — | — | — | — | `test_auth.py` (comptes) |
 | Campagnes, import d'étudiants | ✔ | ✔ | — | — | — | `test_auth.py`, `test_socle_alm.py::test_f01_…` |
-| Dossier : lecture | ✔ | ✔ | périm. (affectés) | — | périm. (le sien) | `test_auth.py::test_supervisor_ne_voit_que_…` |
+| Dossier : lecture | ✔ | ✔ | périm. (affectés) | lecture seule, soutenances actives de son jury | périm. (le sien) | `test_auth.py::test_supervisor_ne_voit_que_…`, `test_socle_alm.py::test_le_jury_liste_en_lecture_seule_les_dossiers_de_ses_soutenances` |
 | Dossier : création, modification descriptive | ✔ | ✔ | — | — | périm. (le sien) | `test_sgsus.py::test_student_cannot_create_a_folder_for_another_student` |
 | Dossier : modifier le statut directement | — | — | — | — | — | `test_sta11_statut_non_modifiable_…` |
 | Soumettre | ✔ | — | — | — | périm. | `test_f02_soumission_sans_rapport_refusee` |

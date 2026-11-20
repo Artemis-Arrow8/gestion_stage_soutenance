@@ -166,7 +166,8 @@ La première préparation de la version PC (images Docker, compilation Flutter) 
 | [docs/recette.md](docs/recette.md) | Cas STA01–STA13 : données, acteur, étapes, attendu, observé, version |
 | [docs/tracabilite.csv](docs/tracabilite.csv) | Exigence → issue → modèle → PR → test → recette → version |
 | [docs/incidents/](docs/incidents/) | Incident du chapitre 20 (juré sur deux soutenances) et retour d'expérience |
-| [docs/guide-exploitation.md](docs/guide-exploitation.md) | Déploiement, sauvegarde, restauration, retour arrière, exploitation |
+| [docs/guide-exploitation.md](docs/guide-exploitation.md) | Déploiement, sauvegarde, restauration (exercice du 20/11/2026 et `scripts/exercice-restauration.sh`), retour arrière, exploitation, jeu `seed_demo` du chapitre 5 |
+| [docs/notes-de-version.md](docs/notes-de-version.md) | Version 1.0.0 : contenu, tag à créer, SHA et empreinte de l'image à recopier, limites |
 | [docs/authentification.md](docs/authentification.md) | Routes d'authentification et permissions |
 
 ## Limites connues

@@ -57,7 +57,19 @@ Les tests créent leurs propres données fictives (`backend/tests/factories.py`)
 - `python manage.py seed_sgsus` (base locale) ;
 - ou les scripts SQL fictifs exécutés sur Render.
 
-Le jeu demandé par le chapitre 5 comprend : deux campagnes, douze étudiants, quatre encadreurs, six jurés, trois salles, deux dossiers incomplets, une pièce remplacée et des tentatives de conflit. Il est **à compléter** : le jeu actuel n'en couvre qu'une partie, voir les réserves dans `cahier-des-charges.md`.
+Le jeu demandé par le chapitre 5 est fourni par **`python manage.py seed_demo`** (ajouté le 20/11/2026) :
+
+- deux campagnes (2025-2026 close, 2026-2027 active) ;
+- douze étudiants fictifs ;
+- quatre encadreurs, à raison de trois dossiers chacun ;
+- six jurés répartis en trois jurys complets, dont une personne qui siège dans deux jurys ;
+- trois salles ;
+- deux dossiers incomplets (aucun rapport déposé) ;
+- une pièce remplacée : V1 avec corrections demandées, puis V2 soumise, l'avis restant attaché à V1 ;
+- quatre soutenances valides ;
+- deux tentatives de conflit (salle et personne), **refusées** par EXG01, sans écriture.
+
+Les dossiers avancent par les vrais services métier (dépôt, soumission, avis, autorisation). Test : `tests/test_seed_demo.py` (volumes, pièce remplacée, refus des conflits, réexécution sans doublon, refus en production). Le même jeu sert à l'exercice de restauration (`scripts/exercice-restauration.sh`, voir `guide-exploitation.md`).
 
 ## Anomalies
 

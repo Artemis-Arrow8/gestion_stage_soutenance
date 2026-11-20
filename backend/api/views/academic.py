@@ -45,6 +45,7 @@ from api.serializers import (
     StudentSerializer,
 )
 from api.services import dossiers, import_etudiants, notes
+from api.services.acces_documents import dossiers_du_jury
 from api.services.idempotence import executer_idempotent
 
 from .helpers import etudiant_du_compte
@@ -115,6 +116,8 @@ class InternshipFolderViewSet(viewsets.ModelViewSet):
     Règles par rôle :
         * admin / responsable : accès complet ;
         * encadreur : lecture seule des dossiers qui lui sont affectés ;
+        * jury : lecture seule des dossiers des soutenances actives de son
+          jury (il lit le rapport avant la soutenance) ;
         * étudiant : ses propres dossiers ; il ne peut ni changer le statut,
           ni réattribuer le dossier, ni changer de campagne après création.
     """
@@ -232,6 +235,10 @@ class InternshipFolderViewSet(viewsets.ModelViewSet):
             return base.filter(
                 supervisor_assignments__user=self.request.user
             ).distinct()
+        if role == 'jury':
+            # Seulement les dossiers des soutenances (non annulées) de son
+            # jury ; la sous-requête évite tout doublon.
+            return base.filter(pk__in=dossiers_du_jury(self.request.user))
         if student is None:
             return base.none()
         return base.filter(student=student)
@@ -332,6 +339,11 @@ class DocumentVersionViewSet(viewsets.ReadOnlyModelViewSet):
             return base.filter(
                 folder__supervisor_assignments__user=self.request.user
             ).distinct()
+        if role == 'jury':
+            # Versions des rapports des soutenances actives de son jury. Le
+            # TÉLÉCHARGEMENT reste contrôlé par decision_acces (un rapport
+            # confidentiel exige une habilitation).
+            return base.filter(folder_id__in=dossiers_du_jury(self.request.user))
         if student is None:
             return base.none()
         return base.filter(folder__student=student)

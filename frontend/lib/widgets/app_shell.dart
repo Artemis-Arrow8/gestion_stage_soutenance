@@ -94,10 +94,12 @@ abstract final class Session {
       AppSection.documents,
       AppSection.profil,
     ],
-    // Le jury consulte ses soutenances et saisit les notes (chapitre 2).
+    // Le jury consulte ses soutenances, LIT les rapports avant le jour J
+    // (« Rapports à lire ») et saisit les notes (chapitre 2).
     'jury' => const [
       AppSection.dashboard,
       AppSection.planning,
+      AppSection.documents,
       AppSection.evaluations,
       AppSection.profil,
     ],

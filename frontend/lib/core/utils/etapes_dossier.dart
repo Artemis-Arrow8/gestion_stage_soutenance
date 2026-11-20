@@ -1,15 +1,4 @@
-/// « Que dois-je faire maintenant ? » : traduit l'état d'un dossier de stage
-/// en une phrase simple et en UNE action évidente, selon le rôle.
-///
-/// Principe d'ergonomie retenu : une personne qui n'a jamais été formée
-/// doit comprendre d'un coup d'œil où en est le dossier et quel bouton
-/// toucher. L'écran n'affiche donc jamais tous les boutons possibles : il
-/// n'affiche que ceux qui ont un sens pour CE rôle et CET état. Le serveur
-/// reste l'autorité : un bouton affiché à tort serait de toute façon refusé
-/// (409), mais l'utilisateur ne doit jamais avoir à tâtonner.
-///
-/// Ce fichier ne contient que de la logique (pas d'interface) : il est
-/// testé seul (test/etapes_dossier_test.dart) et partagé par l'écran
+/// Etapes a Suivre pour un dossier de stage ou de soutenance, vues par l'étudiant, l'encadreur et le personnel.
 /// « Dossiers » et le tableau de bord.
 library;
 
@@ -63,27 +52,13 @@ CategorieDossier categorieDossier(String? role, Map<String, dynamic> dossier) {
   };
 }
 
-/// Étape du mode d'emploi affiché en haut de l'écran (petites cartes).
-typedef EtapeGuide = ({String titre, String texte});
-
-/// Mode d'emploi en 3 étapes, dans les mots du [role].
-List<EtapeGuide> guideDuRole(String? role) => switch (role) {
-  'student' => const [
-    (titre: 'Déposez', texte: 'votre rapport au format PDF'),
-    (titre: 'Envoyez', texte: 'le rapport à votre encadreur'),
-    (titre: 'Suivez', texte: 'son avis et l’autorisation ici'),
-  ],
-  'supervisor' => const [
-    (titre: 'Lisez', texte: 'le rapport envoyé par l’étudiant'),
-    (titre: 'Décidez', texte: 'accepter ou demander des corrections'),
-    (titre: 'C’est tout', texte: 'le responsable prend le relais'),
-  ],
-  _ => const [
-    (titre: 'Repérez', texte: 'les dossiers « À traiter »'),
-    (titre: 'Lisez', texte: 'le rapport accepté par l’encadreur'),
-    (titre: 'Décidez', texte: 'autoriser ou refuser la soutenance'),
-  ],
-};
+/// Vrai si l'étudiant peut déposer une nouvelle version de son rapport.
+///
+/// Le bouton de dépôt reste TOUJOURS visible sur sa page (il ne doit jamais
+/// chercher « où ajouter mon rapport ») ; seul un dossier refusé l'en
+/// empêche, car il doit d'abord être rouvert par le responsable.
+bool peutDeposer(String? role, Map<String, dynamic> dossier) =>
+    role == 'student' && dossier['status']?.toString() != 'rejete';
 
 /// Couleur de la situation, du point de vue de l'utilisateur.
 enum HumeurDossier {
@@ -107,7 +82,7 @@ const etapesParcours = <String>[
   // qu'aucun rapport n'est déposé, le libellé ne doit pas laisser croire
   // que c'est déjà fait.
   'Dépôt du rapport',
-  'Avis de l’encadreur',
+  'Avis de l encadreur',
   'Autorisation',
   'Prêt',
 ];
@@ -284,8 +259,26 @@ SituationDossier situationDossier(String? role, Map<String, dynamic> dossier) {
           humeur: HumeurDossier.attente,
         ),
       };
+    case 'jury':
+      // Le jury lit le rapport AVANT la soutenance pour préparer ses
+      // questions : il n'a aucune décision à prendre sur le dossier.
+      return version == null
+          ? SituationDossier(
+              etape: etape,
+              titre: 'Rapport pas encore disponible',
+              explication: 'L’étudiant n’a pas encore déposé son rapport.',
+              humeur: HumeurDossier.attente,
+            )
+          : SituationDossier(
+              etape: etape,
+              titre: 'Rapport à lire',
+              explication:
+                  'Lisez $libelleVersion avant la soutenance et préparez '
+                  'vos questions.',
+              humeur: HumeurDossier.aFaire,
+            );
     default:
-      // Autres rôles (jury…) : consultation seule.
+      // Rôle inconnu : consultation seule.
       return statut == 'recevable'
           ? _pret(etape, 'Le dossier peut être planifié.')
           : SituationDossier(
@@ -359,7 +352,9 @@ SituationDossier _situationEtudiant(
       return SituationDossier(
         etape: etape,
         titre: 'Rapport envoyé',
-        explication: 'Rien à faire pour l’instant : votre encadreur examine votre rapport.',
+        explication:
+            'Rien à faire pour l’instant : votre encadreur lit votre rapport. '
+            'Vous serez prévenu ici de sa réponse.',
         humeur: HumeurDossier.attente,
       );
     case 'valide':

@@ -64,6 +64,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     'supervisor',
     'admin',
     'responsible',
+    // Le jury : rapports des soutenances où il siège, à lire avant.
+    'jury',
   }.contains(auth.role);
 
   /// Charge (ou recharge si [force]) le planning et les dossiers.
@@ -598,6 +600,7 @@ class _GrilleEspaces extends StatelessWidget {
     AppSection.documents when etat.role == 'student' =>
       'Mon dossier et mes documents',
     AppSection.documents when etat.role == 'supervisor' => 'Rapports à examiner',
+    AppSection.documents when etat.role == 'jury' => 'Rapports à lire',
     AppSection.planning when etat.role == 'jury' => 'Mon planning de jury',
     AppSection.campaigns => 'Gestion des campagnes',
     AppSection.accounts => 'Comptes et rôles',
@@ -623,6 +626,12 @@ class _GrilleEspaces extends StatelessWidget {
       AppSection.jury when PlanningStore.juryMembers.isNotEmpty => (
         '${PlanningStore.juryMembers.length} membre(s) de jury',
         null,
+      ),
+      AppSection.documents when etat.role == 'jury' && etat.dossiers != null => (
+        etat.dossiers!.isEmpty
+            ? 'Aucun rapport pour le moment'
+            : '${etat.dossiers!.length} rapport(s) à lire avant la soutenance',
+        etat.dossiers!.isEmpty ? null : SgTone.gold,
       ),
       AppSection.documents when etat.role != 'student' && etat.aTraiter > 0 => (
         etat.role == 'supervisor'

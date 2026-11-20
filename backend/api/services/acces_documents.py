@@ -57,6 +57,21 @@ def _est_proprietaire(utilisateur, dossier):
     return compte is not None and compte.user_id == utilisateur.pk
 
 
+def dossiers_du_jury(utilisateur):
+    """
+    Identifiants des dossiers que `utilisateur` (membre de jury) doit lire :
+    ceux des soutenances ACTIVES (non annulées) de son jury.
+
+    Retour : sous-requête de `folder_id`, utilisable dans `pk__in=` ou
+    `folder_id__in=` (une seule requête SQL, sans doublon gênant).
+    """
+    return (
+        Defense.objects.filter(jury__members__account__user=utilisateur)
+        .exclude(status='annule')
+        .values('folder_id')
+    )
+
+
 def _siege_au_jury(utilisateur, dossier):
     """Vrai si le compte est membre du jury d'une soutenance active du dossier."""
     compte_jury = getattr(utilisateur, 'jury_member_account', None)

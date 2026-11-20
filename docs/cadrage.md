@@ -88,6 +88,15 @@ Questions à poser (chapitre 1) :
 
 Aucun engagement de dépense ne doit être pris sans offre datée.
 
+**Conditions des offres gratuites Render, consultées le 20/11/2026** (documentation officielle `render.com/docs/free`, `render.com/docs/compute-plans`). Les montants en dollars ne sont pas lisibles sans navigateur sur `render.com/pricing` : ils restent à relever depuis le tableau de bord, avec leur date.
+
+| Constat (20/11/2026) | Conséquence pour SGSUS |
+|---|---|
+| Une base PostgreSQL gratuite **expire 30 jours après sa création**, puis Render la **supprime** après 14 jours de grâce ; 1 Go de stockage, **aucune sauvegarde**. | L'offre gratuite ne convient qu'à une démonstration courte. Pour un pilote, une offre payante avec sauvegardes est nécessaire, en plus de `scripts/backup.ps1`. |
+| Un service Web gratuit **s'endort après 15 minutes sans trafic** ; le réveil prend environ une minute ; 750 heures gratuites par mois. | La première requête après une pause est lente : à prévoir avant une démonstration (réveiller le service). |
+| Un service gratuit perd ses fichiers locaux à l'endormissement ou au redéploiement. | Les rapports PDF déposés ne sont pas durables sur l'offre gratuite (réserve déjà notée) : un stockage persistant est nécessaire pour un usage réel. |
+| Les sites statiques (application Web Flutter) sont gratuits ; ils consomment la bande passante incluse. | Coût du site Web : nul dans les limites incluses. |
+
 ## 7. Périmètre de la solution
 
 - **Backend** : API REST Django et Django REST Framework, PostgreSQL 17 (contraintes d'exclusion `tstzrange` et `btree_gist`).

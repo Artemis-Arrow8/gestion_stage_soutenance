@@ -45,17 +45,24 @@ class IsStudent(permissions.BasePermission):
 
 
 class IsAdminResponsibleOrStudent(permissions.BasePermission):
-    """Autorise le personnel, les étudiants et les encadreurs en lecture."""
+    """
+    Autorise le personnel et les étudiants ; l'encadreur et le jury en
+    lecture seule.
+    """
 
     def has_permission(self, request, view):
         """
         Retourne True pour le personnel et les étudiants (toutes méthodes),
-        ou pour un encadreur utilisant une méthode sûre.
+        ou pour un encadreur ou un membre du jury utilisant une méthode sûre
+        (GET, HEAD, OPTIONS). Le périmètre (dossiers affectés, soutenances
+        de son jury) est appliqué par le `get_queryset` de la vue.
         """
         role = get_user_role(request.user)
         if role in ('admin', 'responsible', 'student'):
             return True
-        return role == 'supervisor' and request.method in permissions.SAFE_METHODS
+        # Le jury lit les rapports AVANT la soutenance pour préparer ses
+        # questions ; il ne dépose ni ne modifie rien.
+        return role in ('supervisor', 'jury') and request.method in permissions.SAFE_METHODS
 
 
 class IsSupervisor(permissions.BasePermission):

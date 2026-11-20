@@ -544,6 +544,37 @@ def test_le_jury_ne_consulte_que_les_rapports_de_ses_soutenances(rapport_depose)
     assert client_de(membre).get(url).status_code == 200
 
 
+def test_le_jury_liste_en_lecture_seule_les_dossiers_de_ses_soutenances(rapport_depose):
+    """
+    Écran « Rapports à lire » : le jury liste les dossiers (et leurs
+    versions) des soutenances actives de SON jury, et rien d'autre ; il ne
+    peut ni modifier un dossier ni déposer un rapport.
+    """
+    dossier, version, _ = rapport_depose
+    jury = jury_complet()
+    client = client_de(compte_membre(jury, "rapporteur"))
+
+    # Avant toute soutenance : liste vide, fiche introuvable (404).
+    assert client.get("/api/internship-folders/").json() == []
+    assert client.get("/api/document-versions/").json() == []
+    assert client.get(f"/api/internship-folders/{dossier.pk}/").status_code == 404
+
+    InternshipFolder.objects.filter(pk=dossier.pk).update(status="recevable")
+    soutenance = creer_defense(dossier, jury, "Salle 101", creneau(9, 0, 10, 0))
+    assert [d["id"] for d in client.get("/api/internship-folders/").json()] == [dossier.pk]
+    assert [v["id"] for v in client.get("/api/document-versions/").json()] == [version.pk]
+
+    # Lecture seule : aucune écriture n'est permise au jury.
+    assert client.patch(f"/api/internship-folders/{dossier.pk}/",
+                        {"subject": "Autre"}, format="json").status_code == 403
+    assert client.post(f"/api/internship-folders/{dossier.pk}/autoriser/").status_code == 403
+
+    # Soutenance annulée : le dossier disparaît de sa liste.
+    soutenance.status = "annule"
+    soutenance.save(update_fields=["status"])
+    assert client.get("/api/internship-folders/").json() == []
+
+
 # ---------------------------------------------------------------------------
 # F01 : import idempotent des étudiants
 # ---------------------------------------------------------------------------

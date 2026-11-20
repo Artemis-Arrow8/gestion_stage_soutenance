@@ -1,14 +1,6 @@
-/// Configuration globale de l'application, fixée à la compilation.
-///
-/// Les valeurs proviennent des options `--dart-define` passées à
-/// `flutter run` / `flutter build`, par exemple :
-///
-/// ```sh
-/// flutter build web --dart-define=API_BASE_URL=https://mon-api.onrender.com/api
-/// ```
-///
-/// Centraliser ces valeurs ici évite de disperser des URL « en dur » dans
-/// les services et facilite le passage d'un environnement à l'autre.
+/*Configuration globale de l'application, fixée à la compilation.
+ Centraliser ces valeurs ici évite de disperser des URL « en dur » dans
+les services et facilite le passage d'un environnement à l'autre.*/
 library;
 
 /// Paramètres de l'application, accessibles en lecture seule.
@@ -20,7 +12,7 @@ abstract final class AppConfig {
   static const String appTitle = 'SGSUS — Gestion des stages et soutenances';
 
   /// URL publique de l'API Django, terminée par `/api`.
-  ///
+  
   /// Valeur par défaut : le backend local publié par Docker Compose sur le
   /// port 8001. En production, fournir l'URL HTTPS du Web Service Render.
   /// Ne jamais y mettre l'URL PostgreSQL : Flutter ne parle qu'à l'API HTTP.
