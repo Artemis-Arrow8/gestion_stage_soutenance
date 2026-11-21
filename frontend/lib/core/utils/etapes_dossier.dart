@@ -1,5 +1,8 @@
-/// Etapes a Suivre pour un dossier de stage ou de soutenance, vues par l'étudiant, l'encadreur et le personnel.
-/// « Dossiers » et le tableau de bord.
+/// Étapes à suivre pour un dossier de stage, vues par l'étudiant,
+/// l'encadreur, le personnel et le jury : « que dois-je faire maintenant ? ».
+///
+/// Partagé par l'écran « Dossiers » et le tableau de bord, pour que les deux
+/// disent toujours la même chose avec les mêmes mots.
 library;
 
 /// Actions principales qu'un utilisateur peut faire sur un dossier.
@@ -59,6 +62,59 @@ CategorieDossier categorieDossier(String? role, Map<String, dynamic> dossier) {
 /// empêche, car il doit d'abord être rouvert par le responsable.
 bool peutDeposer(String? role, Map<String, dynamic> dossier) =>
     role == 'student' && dossier['status']?.toString() != 'rejete';
+
+/// Vrai si, juste après avoir ajouté un fichier, l'étudiant peut l'envoyer
+/// (ou le renvoyer) à son encadreur dans la foulée : dossier en brouillon ou
+/// corrections demandées. Ailleurs, l'ajout suffit (un dossier déjà envoyé
+/// ou accepté repasse de lui-même devant l'encadreur, voir STA05).
+bool envoiPossible(Map<String, dynamic> dossier) =>
+    const {'brouillon', 'a_corriger'}.contains(dossier['status']?.toString());
+
+/// Vrai si la dernière version a été ajoutée mais PAS encore envoyée à
+/// l'encadreur (brouillon, ou version corrigée ajoutée après l'avis).
+bool versionNonEnvoyee(Map<String, dynamic> dossier) {
+  if (numeroDerniereVersion(dossier) == null) return false;
+  return switch (dossier['status']?.toString()) {
+    'brouillon' => true,
+    'a_corriger' => !_avisSurDerniereVersion(dossier),
+    _ => false,
+  };
+}
+
+/// Texte du grand bouton « Ajouter » de l'étudiant, dans ses mots :
+/// premier dépôt, version corrigée demandée, remplacement d'un fichier pas
+/// encore envoyé, ou nouvelle version.
+String libelleAjout(Map<String, dynamic> dossier) {
+  if (numeroDerniereVersion(dossier) == null) return 'Ajouter mon rapport';
+  if (dossier['status']?.toString() == 'a_corriger' && _avisSurDerniereVersion(dossier)) {
+    return 'Ajouter la version corrigée';
+  }
+  if (versionNonEnvoyee(dossier)) return 'Remplacer par un autre fichier';
+  return 'Ajouter une nouvelle version';
+}
+
+/// Bouton de l'accueil de l'étudiant : sa prochaine étape en deux ou trois
+/// mots (il mène à la page du rapport), ou `null` s'il n'a rien à faire.
+String? boutonAccueilEtudiant(Map<String, dynamic> dossier) {
+  final situation = situationDossier('student', dossier);
+  if (!situation.aTraiter || situation.actions.isEmpty) return null;
+  final correction = dossier['status']?.toString() == 'a_corriger';
+  return switch (situation.actions.first) {
+    ActionDossier.envoyer => correction ? 'Renvoyer ma version corrigée' : 'Envoyer mon rapport',
+    _ => correction ? 'Corriger mon rapport' : 'Ajouter mon rapport',
+  };
+}
+
+/// Mot laissé par l'étudiant à son encadreur en envoyant son rapport (ex.
+/// « J'ai repris le chapitre 2 »), tant que le rapport attend l'avis ;
+/// `null` sinon.
+String? messageEtudiant(Map<String, dynamic> dossier) {
+  if (dossier['status']?.toString() != 'soumis') return null;
+  final etape = dossier['derniere_etape'];
+  if (etape is! Map || etape['evenement']?.toString() != 'soumettre') return null;
+  final texte = (etape['motif'] ?? '').toString().trim();
+  return texte.isEmpty ? null : texte;
+}
 
 /// Couleur de la situation, du point de vue de l'utilisateur.
 enum HumeurDossier {
@@ -310,8 +366,11 @@ SituationDossier _situationEtudiant(
       if (version == null) {
         return SituationDossier(
           etape: etape,
-          titre: 'Déposez votre rapport',
-          explication: 'Choisissez votre rapport de stage au format PDF (10 Mo maximum).',
+          titre: 'Ajoutez votre rapport',
+          explication:
+              'Touchez « Ajouter mon rapport » et choisissez votre fichier PDF '
+              '(10 Mo maximum). Vous pourrez l’envoyer à votre encadreur '
+              'dans la foulée.',
           actions: const [ActionDossier.deposer],
           aTraiter: true,
           humeur: HumeurDossier.aFaire,
@@ -321,8 +380,8 @@ SituationDossier _situationEtudiant(
         etape: etape,
         titre: 'Envoyez votre rapport',
         explication:
-            'La version $version est déposée. Envoyez-la à votre encadreur '
-            'pour qu’il donne son avis.',
+            'La version $version est ajoutée mais pas encore envoyée : '
+            'envoyez-la à votre encadreur pour qu’il donne son avis.',
         actions: const [ActionDossier.envoyer, ActionDossier.deposer],
         aTraiter: true,
         humeur: HumeurDossier.aFaire,
@@ -334,7 +393,10 @@ SituationDossier _situationEtudiant(
         return SituationDossier(
           etape: etape,
           titre: 'Corrections demandées',
-          explication: 'Lisez le commentaire de votre encadreur, puis déposez la version corrigée.',
+          explication:
+              'Votre encadreur demande des modifications. Corrigez votre '
+              'rapport, puis ajoutez la version corrigée : vous pourrez la '
+              'lui renvoyer aussitôt.',
           actions: const [ActionDossier.deposer],
           aTraiter: true,
           humeur: HumeurDossier.alerte,
@@ -342,8 +404,10 @@ SituationDossier _situationEtudiant(
       }
       return SituationDossier(
         etape: etape,
-        titre: 'Envoyez la version corrigée',
-        explication: 'La version $version est déposée. Envoyez-la à votre encadreur.',
+        titre: 'Renvoyez la version corrigée',
+        explication:
+            'La version $version est ajoutée mais pas encore renvoyée : '
+            'renvoyez-la à votre encadreur.',
         actions: const [ActionDossier.envoyer, ActionDossier.deposer],
         aTraiter: true,
         humeur: HumeurDossier.aFaire,
@@ -354,7 +418,8 @@ SituationDossier _situationEtudiant(
         titre: 'Rapport envoyé',
         explication:
             'Rien à faire pour l’instant : votre encadreur lit votre rapport. '
-            'Vous serez prévenu ici de sa réponse.',
+            'Sa réponse s’affichera ici. Vous pouvez encore ajouter une '
+            'nouvelle version si besoin.',
         humeur: HumeurDossier.attente,
       );
     case 'valide':

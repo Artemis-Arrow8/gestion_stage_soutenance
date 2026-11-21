@@ -3,11 +3,15 @@
 ///
 /// * **Étudiant** — « Mon rapport de stage » : TOUT est sur une seule page,
 ///   en blocs séparés, sans rien à déplier ni panneau flottant :
-///   1. où en est mon rapport (phrase simple + 4 étapes + LE bouton à
-///      toucher) ; le bouton « Déposer une nouvelle version » est TOUJOURS
-///      visible (on ne passe jamais par « Modifier » pour déposer) ;
+///   1. mon rapport : la phrase qui dit où il en est, le commentaire de
+///      l'encadreur s'il demande des corrections, puis une GRANDE zone
+///      « Ajouter mon rapport » (bordure en pointillés, comme une zone de
+///      dépôt de fichier) toujours visible en haut de la page — jamais
+///      cachée derrière « Historique » ou « Modifier ». Après le choix du
+///      fichier, UNE seule fenêtre propose de l'envoyer (ou de le renvoyer
+///      corrigé) à l'encadreur, avec un mot facultatif pour lui ;
 ///   2. mes rapports déposés (chaque version, avec la réponse de
-///      l'encadreur) ;
+///      l'encadreur, et « Ajouter la version corrigée » sous sa demande) ;
 ///   3. l'historique ;
 ///   4. mon stage (entreprise et sujet, modifiables à part).
 /// * **Encadreur** — « Rapports à examiner » : les rapports qui attendent
@@ -51,6 +55,19 @@ const _tailleMaxPdf = 10 * 1024 * 1024;
 
 /// Au-delà de ce nombre de dossiers, un champ de recherche est proposé.
 const _seuilRecherche = 6;
+
+/// Longueur maximale du mot laissé à l'encadreur (identique au serveur).
+const _longueurMaxMessage = 1000;
+
+/// Choix fait dans la fenêtre qui suit l'ajout d'un fichier : l'envoyer
+/// tout de suite à l'encadreur ou non, avec un mot facultatif pour lui.
+typedef _ChoixAjout = ({bool envoyer, String message});
+
+/// Taille lisible d'un fichier : « 850 Ko », « 2,4 Mo ».
+String _fmtTaille(int octets) {
+  if (octets < 1024 * 1024) return '${(octets / 1024).ceil()} Ko';
+  return '${(octets / (1024 * 1024)).toStringAsFixed(1).replaceAll('.', ',')} Mo';
+}
 
 /// Formate une date ISO (`2026-07-10T…`) en `10/07/2026`.
 String _fmtDate(String? raw) {
@@ -244,6 +261,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     String? champ,
     bool champObligatoire = false,
     String? exemple,
+    int? longueurMax,
   }) {
     return showDialog<String>(
       context: context,
@@ -256,6 +274,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         champ: champ,
         champObligatoire: champObligatoire,
         exemple: exemple,
+        longueurMax: longueurMax,
       ),
     );
   }
@@ -268,7 +287,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   void _agir(ActionDossier action, Map<String, dynamic> dossier) {
     switch (action) {
       case ActionDossier.deposer:
-        _deposer(dossier);
+        _ajouter(dossier);
       case ActionDossier.envoyer:
         _envoyer(dossier);
       case ActionDossier.accepter:
@@ -305,36 +324,21 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     }
   }
 
-  /// Étudiant : choisit un PDF et le dépose ; propose ensuite de l'envoyer
-  /// tout de suite à l'encadreur quand c'est l'étape suivante.
-  Future<void> _deposer(Map<String, dynamic> dossier) async {
+  /// Étudiant : ajoute un document (PDF) puis, quand c'est possible, l'envoie
+  /// (ou le renvoie corrigé) à l'encadreur dans la foulée — un seul geste,
+  /// une seule fenêtre, au lieu de deux étapes séparées.
+  ///
+  /// Sur le Web, le sélecteur de fichier doit s'ouvrir DIRECTEMENT après le
+  /// toucher (sinon le navigateur le bloque) : il passe donc en premier, et
+  /// les explications (avertissement, commentaire de l'encadreur) viennent
+  /// dans la fenêtre qui suit.
+  Future<void> _ajouter(Map<String, dynamic> dossier) async {
     final id = _id(dossier);
-    final statut = _statut(dossier);
+    if (_enCours.contains(id)) return;
 
-    // Un dépôt alors que l'encadreur a déjà le rapport en main : on dit
-    // AVANT de choisir le fichier ce qui va se passer (STA05).
-    final avertissement = switch (statut) {
-      'valide' || 'recevable' =>
-        'Votre rapport a déjà été accepté. La nouvelle version devra de '
-            'nouveau être examinée par votre encadreur.',
-      'soumis' =>
-        'Votre encadreur n’a pas encore répondu : il examinera la nouvelle '
-            'version à la place de l’ancienne.',
-      _ => null,
-    };
-    if (avertissement != null) {
-      final ok = await _confirmer(
-        titre: 'Déposer une nouvelle version ?',
-        message: avertissement,
-        bouton: 'Choisir le fichier',
-        icone: Icons.upload_file_rounded,
-      );
-      if (ok == null || !mounted) return;
-    }
-
-    final PlatformFile? fichier;
+    final PlatformFile? choisi;
     try {
-      fichier = await FilePicker.pickFile(
+      choisi = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: ['pdf'],
       );
@@ -342,56 +346,97 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       if (mounted) SgToast.show(context, _message(e), tone: SgTone.danger);
       return;
     }
-    if (fichier == null || !mounted) return;
+    if (choisi == null || !mounted) return;
+    final fichier = choisi;
 
     // Contrôle immédiat (le serveur vérifie aussi taille et signature).
     final taille = (await fichier.length()) ?? 0;
+    if (!mounted) return;
     if (taille > _tailleMaxPdf) {
-      if (mounted) {
-        SgToast.show(
-          context,
-          'Ce fichier dépasse 10 Mo : réduisez-le (par exemple en '
-          'compressant les images) puis réessayez.',
-          tone: SgTone.danger,
-        );
-      }
+      SgToast.show(
+        context,
+        'Ce fichier dépasse 10 Mo : réduisez-le (par exemple en '
+        'compressant les images) puis réessayez.',
+        tone: SgTone.danger,
+      );
       return;
     }
 
-    final depose = await _executer(
-      id,
-      () => _service.uploadDocument(id, fichier!),
-      avertissement == null
-          ? 'Rapport déposé.'
-          : 'Nouvelle version déposée : elle est transmise à votre encadreur.',
+    // Une seule fenêtre : ce qui va se passer, et « envoyer maintenant ? ».
+    final statut = _statut(dossier);
+    final nom = fichier.name;
+    final choix = await showDialog<_ChoixAjout>(
+      context: context,
+      builder: (_) => _DialogueAjout(
+        nomFichier: nom,
+        taille: taille,
+        numero: (numeroDerniereVersion(dossier) ?? 0) + 1,
+        statut: statut,
+        envoiPossible: envoiPossible(dossier),
+        corrections: statut == 'a_corriger' ? commentaireCorrections(dossier) : null,
+      ),
     );
-    if (!depose || !mounted || !_estEtudiant) return;
+    if (choix == null || !mounted) return;
 
-    // Enchaînement naturel : « déposé » → « l'envoyer maintenant ? ».
-    final aJour = _dossierParId(id);
-    if (aJour == null) return;
-    if (situationDossier(_role, aJour).actions.contains(ActionDossier.envoyer)) {
-      await _envoyer(aJour, apresDepot: true);
+    setState(() => _enCours.add(id));
+    var ajoute = false;
+    try {
+      await _service.uploadDocument(id, fichier);
+      ajoute = true;
+      if (choix.envoyer) {
+        await _service.transition(id, 'soumettre', motif: choix.message.isEmpty ? null : choix.message);
+      }
+      if (mounted) {
+        SgToast.show(context, switch (statut) {
+          'a_corriger' when choix.envoyer => 'Version corrigée renvoyée à votre encadreur.',
+          _ when choix.envoyer => 'Rapport envoyé à votre encadreur.',
+          'soumis' => 'Nouvelle version ajoutée : votre encadreur examinera celle-ci.',
+          'valide' || 'recevable' => 'Nouvelle version ajoutée : votre encadreur va l’examiner de nouveau.',
+          _ => 'Document ajouté. Il reste à l’envoyer à votre encadreur.',
+        });
+      }
+    } catch (e) {
+      // Fichier ajouté mais envoi refusé : on dit exactement où on en est.
+      if (mounted) {
+        SgToast.show(
+          context,
+          ajoute
+              ? 'Document ajouté, mais pas encore envoyé : ${_message(e)} '
+                    'Touchez « Envoyer à mon encadreur » pour réessayer.'
+              : _message(e),
+          tone: SgTone.danger,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _enCours.remove(id));
     }
+    if (ajoute && mounted) await _rafraichir();
   }
 
-  /// Étudiant : envoie le rapport à l'encadreur (transition « soumettre »).
-  Future<void> _envoyer(Map<String, dynamic> dossier, {bool apresDepot = false}) async {
+  /// Étudiant : envoie (ou renvoie) le rapport déjà ajouté à l'encadreur
+  /// (transition « soumettre »), avec un mot facultatif pour lui.
+  Future<void> _envoyer(Map<String, dynamic> dossier) async {
     final version = numeroDerniereVersion(dossier);
+    final correction = _statut(dossier) == 'a_corriger';
     final texte = await _confirmer(
-      titre: apresDepot ? 'L’envoyer maintenant ?' : 'Envoyer votre rapport ?',
+      titre: correction ? 'Renvoyer la version corrigée ?' : 'Envoyer votre rapport ?',
       message:
           '${version == null ? 'Votre rapport' : 'La version $version de votre rapport'} '
           'sera envoyée à votre encadreur, qui donnera son avis. Vous pourrez '
-          'encore déposer une nouvelle version ensuite.',
-      bouton: 'Envoyer à mon encadreur',
+          'encore ajouter une nouvelle version ensuite.',
+      bouton: correction ? 'Renvoyer à mon encadreur' : 'Envoyer à mon encadreur',
       icone: Icons.send_rounded,
+      champ: 'Message pour votre encadreur',
+      exemple: correction
+          ? 'Ex. : j’ai complété la bibliographie et revu le chapitre 2.'
+          : 'Ex. : voici mon rapport de stage.',
+      longueurMax: _longueurMaxMessage,
     );
     if (texte == null || !mounted) return;
     await _executer(
       _id(dossier),
-      () => _service.transition(_id(dossier), 'soumettre'),
-      'Rapport envoyé à votre encadreur.',
+      () => _service.transition(_id(dossier), 'soumettre', motif: texte.isEmpty ? null : texte),
+      correction ? 'Version corrigée renvoyée à votre encadreur.' : 'Rapport envoyé à votre encadreur.',
     );
   }
 
@@ -424,8 +469,8 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     final texte = await _confirmer(
       titre: 'Demander des corrections',
       message:
-          '${_nomEtudiant(dossier)} verra votre commentaire et déposera une '
-          'version corrigée.',
+          '${_nomEtudiant(dossier)} verra votre commentaire, ajoutera une '
+          'version corrigée et vous la renverra.',
       bouton: 'Envoyer la demande',
       icone: Icons.edit_note_rounded,
       champ: 'Ce qu’il faut corriger',
@@ -519,7 +564,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       SgToast.show(
         context,
         dossier == null
-            ? 'Dossier créé. Étape suivante : déposer votre rapport.'
+            ? 'Dossier créé. Étape suivante : ajouter votre rapport.'
             : 'Informations du stage mises à jour.',
       );
       await _rafraichir();
@@ -654,7 +699,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         title: 'Commencez par créer votre dossier',
         message:
             'Indiquez votre entreprise d’accueil et votre sujet. Vous '
-            'déposerez ensuite votre rapport.',
+            'ajouterez ensuite votre rapport.',
         action: SgButton(
           'Créer mon dossier de stage',
           icon: Icons.create_new_folder_outlined,
@@ -674,16 +719,16 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   List<Widget> _blocsEtudiant(Map<String, dynamic> dossier) {
     final id = _id(dossier);
     return [
-      // 1. Où en est mon rapport : la phrase, les étapes et LES boutons
-      //    (dont « Déposer une nouvelle version », toujours visible).
+      // 1. Mon rapport : la phrase, le commentaire de l'encadreur, la
+      //    grande zone « Ajouter » (toujours visible) et l'envoi.
       SgCard(
         padding: const EdgeInsets.all(18),
-        child: _CorpsDossier(
+        child: _CarteRapportEtudiant(
           dossier: dossier,
           situation: situationDossier(_role, dossier),
-          role: _role,
           enCours: _enCours.contains(id),
-          onAction: (action) => _agir(action, dossier),
+          onAjouter: () => _ajouter(dossier),
+          onEnvoyer: () => _envoyer(dossier),
           onLire: () => _lire(dossier),
         ),
       ),
@@ -695,6 +740,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         dossier: dossier,
         role: _role,
         onLire: (versionId, numero) => _lire(dossier, versionId: versionId, numero: numero),
+        // Sous la demande de corrections de l'encadreur, le bouton pour
+        // ajouter la version corrigée est à portée de main.
+        onAjouter: peutDeposer(_role, dossier) ? () => _ajouter(dossier) : null,
       ),
       const SizedBox(height: 28),
       // 4. Mon stage : entreprise et sujet, modifiables à part (ce bouton
@@ -875,8 +923,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
 // ===========================================================================
 
 /// Situation du dossier (phrase + 4 étapes) et les gros boutons qui ont un
-/// sens pour CE rôle et CET état. Partagé par la page de l'étudiant, les
-/// cartes de l'encadreur et du personnel, et la page d'un dossier.
+/// sens pour CE rôle et CET état. Partagé par les cartes de l'encadreur et
+/// du personnel et par la page d'un dossier (l'étudiant a sa propre carte,
+/// [_CarteRapportEtudiant], construite autour du bouton « Ajouter »).
 class _CorpsDossier extends StatelessWidget {
   const _CorpsDossier({
     required this.dossier,
@@ -905,16 +954,10 @@ class _CorpsDossier extends StatelessWidget {
   /// « Lire le rapport » (dernière version).
   final VoidCallback onLire;
 
-  bool get _etudiant => role == 'student';
-
   /// Texte du bouton d'une action, adapté au dossier.
   String _libelle(ActionDossier action) => switch (action) {
-    ActionDossier.deposer => switch (_statut(dossier)) {
-      _ when numeroDerniereVersion(dossier) == null => 'Déposer mon rapport (PDF)',
-      'a_corriger' => 'Déposer la version corrigée',
-      _ => 'Déposer une nouvelle version',
-    },
-    ActionDossier.envoyer => 'Envoyer à mon encadreur',
+    ActionDossier.deposer => libelleAjout(dossier),
+    ActionDossier.envoyer => 'Envoyer à l’encadreur',
     ActionDossier.accepter => 'Accepter le rapport',
     ActionDossier.demanderCorrections => 'Demander des corrections',
     ActionDossier.autoriser => 'Autoriser la soutenance',
@@ -947,18 +990,16 @@ class _CorpsDossier extends StatelessWidget {
   Widget build(BuildContext context) {
     final version = numeroDerniereVersion(dossier);
     final corrections = commentaireCorrections(dossier);
-    // Pour décider, on LIT d'abord : « Lire » passe avant les décisions de
-    // l'encadreur et du personnel.
-    final lireEnPremier = !_etudiant && situation.aTraiter;
-    // Étudiant : le dépôt d'une nouvelle version reste TOUJOURS à portée de
-    // main, même quand ce n'est pas l'étape attendue.
-    final depotPermanent =
-        peutDeposer(role, dossier) && !situation.actions.contains(ActionDossier.deposer);
+    // Le mot laissé par l'étudiant en envoyant son rapport (« ce que j'ai
+    // corrigé ») aide l'encadreur à relire vite.
+    final message = messageEtudiant(dossier);
+    // Pour décider, on LIT d'abord : « Lire » passe avant les décisions.
+    final lireEnPremier = situation.aTraiter;
 
     final boutonLire = version == null
         ? null
         : _GrosBouton(
-            _etudiant ? 'Relire mon rapport (version $version)' : 'Lire le rapport (version $version)',
+            'Lire le rapport (version $version)',
             icon: _estConfidentiel(dossier) ? Icons.lock_outline_rounded : Icons.chrome_reader_mode_outlined,
             variant: SgBtnVariant.outline,
             onPressed: onLire,
@@ -974,14 +1015,6 @@ class _CorpsDossier extends StatelessWidget {
           loading: enCours && rang == 0,
           onPressed: enCours ? null : () => onAction(action),
         ),
-      if (depotPermanent)
-        _GrosBouton(
-          version == null ? 'Déposer mon rapport (PDF)' : 'Déposer une nouvelle version',
-          icon: Icons.upload_file_rounded,
-          variant: SgBtnVariant.outline,
-          loading: enCours && situation.actions.isEmpty,
-          onPressed: enCours ? null : () => onAction(ActionDossier.deposer),
-        ),
       if (!lireEnPremier && boutonLire != null) boutonLire,
     ];
 
@@ -989,8 +1022,11 @@ class _CorpsDossier extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _BandeauSituation(situation: situation),
-        if (corrections != null &&
-            (_statut(dossier) == 'a_corriger' || situation.aTraiter && _etudiant)) ...[
+        if (message != null) ...[
+          const SizedBox(height: 10),
+          _Citation(titre: 'Message de l’étudiant', texte: message, couleur: AppColors.gold),
+        ],
+        if (corrections != null && _statut(dossier) == 'a_corriger') ...[
           const SizedBox(height: 10),
           _Citation(titre: 'Commentaire de l’encadreur', texte: corrections),
         ],
@@ -1003,7 +1039,7 @@ class _CorpsDossier extends StatelessWidget {
           if (i > 0) const SizedBox(height: 10),
           bouton,
         ],
-        if (version == null && !_etudiant) ...[
+        if (version == null) ...[
           const SizedBox(height: 12),
           const Text(
             'Aucun rapport déposé pour le moment.',
@@ -1011,6 +1047,397 @@ class _CorpsDossier extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+// ===========================================================================
+// Étudiant : « Mon rapport », construit autour du bouton « Ajouter »
+// ===========================================================================
+
+/// Bloc « Mon rapport » de l'étudiant, dans l'ordre où il se lit :
+/// 1. la phrase qui dit où il en est ;
+/// 2. le commentaire de l'encadreur s'il demande des corrections ;
+/// 3. LE bouton à toucher : « Envoyer à mon encadreur » quand un fichier
+///    attend d'être envoyé, puis la grande zone « Ajouter … » — toujours
+///    visible, dorée quand c'est l'étape attendue ;
+/// 4. « Relire mon rapport », puis la barre des 4 étapes.
+class _CarteRapportEtudiant extends StatelessWidget {
+  const _CarteRapportEtudiant({
+    required this.dossier,
+    required this.situation,
+    required this.enCours,
+    required this.onAjouter,
+    required this.onEnvoyer,
+    required this.onLire,
+  });
+
+  /// Dossier de l'étudiant (réponse de /api/internship-folders/).
+  final Map<String, dynamic> dossier;
+
+  /// Situation vue par l'étudiant.
+  final SituationDossier situation;
+
+  /// Vrai pendant un ajout ou un envoi (boutons en attente).
+  final bool enCours;
+
+  /// Choisit un fichier puis propose de l'envoyer.
+  final VoidCallback onAjouter;
+
+  /// Envoie le fichier déjà ajouté à l'encadreur.
+  final VoidCallback onEnvoyer;
+
+  /// Relit la dernière version.
+  final VoidCallback onLire;
+
+  @override
+  Widget build(BuildContext context) {
+    final version = numeroDerniereVersion(dossier);
+    final statut = _statut(dossier);
+    final corrections = statut == 'a_corriger' ? commentaireCorrections(dossier) : null;
+    // L'étape attendue décide de ce qui est mis en avant (en or).
+    final ajoutAttendu = situation.actions.firstOrNull == ActionDossier.deposer;
+    final envoiAttendu = situation.actions.contains(ActionDossier.envoyer);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _BandeauSituation(situation: situation),
+        if (corrections != null) ...[
+          const SizedBox(height: 10),
+          _Citation(titre: 'Ce que votre encadreur demande', texte: corrections),
+        ],
+        const SizedBox(height: 18),
+        // Un fichier ajouté attend d'être envoyé : c'est LE bouton or.
+        if (envoiAttendu) ...[
+          _GrosBouton(
+            statut == 'a_corriger' ? 'Renvoyer à mon encadreur' : 'Envoyer à mon encadreur',
+            icon: Icons.send_rounded,
+            variant: SgBtnVariant.primary,
+            loading: enCours,
+            onPressed: enCours ? null : onEnvoyer,
+          ),
+          const SizedBox(height: 10),
+        ],
+        // La zone « Ajouter » reste TOUJOURS là (sauf dossier refusé, qui
+        // doit d'abord être rouvert par le responsable).
+        if (peutDeposer('student', dossier))
+          _ZoneAjout(
+            titre: libelleAjout(dossier),
+            enAvant: ajoutAttendu,
+            enCours: enCours && !envoiAttendu,
+            onTap: enCours ? null : onAjouter,
+          ),
+        if (version != null) ...[
+          const SizedBox(height: 10),
+          _GrosBouton(
+            'Relire mon rapport (version $version)',
+            icon: Icons.chrome_reader_mode_outlined,
+            variant: SgBtnVariant.outline,
+            onPressed: onLire,
+          ),
+        ],
+        if (situation.etape >= 0) ...[const SizedBox(height: 20), _BarreEtapes(etape: situation.etape)],
+      ],
+    );
+  }
+}
+
+/// Grande zone « Ajouter un document » à bordure en pointillés, comme une
+/// zone de dépôt de fichier : impossible à manquer, facile à toucher au
+/// pouce, et elle dit ce qu'on attend (PDF, 10 Mo).
+class _ZoneAjout extends StatelessWidget {
+  const _ZoneAjout({required this.titre, required this.enAvant, required this.enCours, required this.onTap});
+
+  /// Texte principal (« Ajouter mon rapport », « Ajouter la version
+  /// corrigée »…).
+  final String titre;
+
+  /// Vrai quand ajouter un fichier est l'étape attendue : zone dorée.
+  final bool enAvant;
+
+  /// Vrai pendant l'envoi du fichier.
+  final bool enCours;
+
+  /// Ouvre le choix du fichier (`null` : désactivée).
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final rayon = BorderRadius.circular(AppTheme.radiusSmall);
+    return Semantics(
+      button: true,
+      label: '$titre, fichier PDF de 10 Mo maximum',
+      excludeSemantics: true,
+      child: Material(
+        color: enAvant ? AppColors.goldSoft : AppColors.surfaceAlt,
+        borderRadius: rayon,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: rayon,
+          child: CustomPaint(
+            painter: _BordurePointillee(
+              couleur: enAvant ? AppColors.gold : AppColors.greyLight,
+              rayon: AppTheme.radiusSmall,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+              child: Row(
+                children: [
+                  // Pastille ronde : flèche de dépôt, ou roue pendant l'envoi.
+                  Container(
+                    width: 46,
+                    height: 46,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: enAvant ? AppColors.gold : Colors.white,
+                      border: enAvant ? null : Border.all(color: AppColors.line),
+                    ),
+                    child: enCours
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2.2, color: AppColors.ink),
+                          )
+                        : const Icon(Icons.upload_file_rounded, color: AppColors.ink, size: 24),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          enCours ? 'Envoi du fichier…' : titre,
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.ink),
+                        ),
+                        const SizedBox(height: 3),
+                        const Text(
+                          'Fichier PDF · 10 Mo maximum',
+                          style: TextStyle(fontSize: 12.5, color: AppColors.grey),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (!enCours)
+                    Icon(Icons.add_circle_outline_rounded, color: enAvant ? AppColors.goldDeep : AppColors.greyLight),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Dessine une bordure arrondie en pointillés (zone de dépôt de fichier).
+class _BordurePointillee extends CustomPainter {
+  const _BordurePointillee({required this.couleur, required this.rayon});
+
+  /// Couleur des tirets.
+  final Color couleur;
+
+  /// Rayon des coins.
+  final double rayon;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final pinceau = Paint()
+      ..color = couleur
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6;
+    // Contour légèrement rentré pour que le trait ne soit pas rogné.
+    final contour = Path()..addRRect(RRect.fromRectAndRadius(Offset.zero & size, Radius.circular(rayon)).deflate(0.8));
+    // Tirets de 6 px espacés de 4 px tout le long du contour.
+    for (final trace in contour.computeMetrics()) {
+      for (var debut = 0.0; debut < trace.length; debut += 10) {
+        canvas.drawPath(trace.extractPath(debut, debut + 6), pinceau);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BordurePointillee ancien) => ancien.couleur != couleur || ancien.rayon != rayon;
+}
+
+/// Fenêtre qui suit le choix d'un fichier : ce qui a été choisi, ce que
+/// l'encadreur avait demandé, ce qui va se passer, et — quand c'est
+/// possible — « Envoyer à mon encadreur » tout de suite, avec un mot
+/// facultatif pour lui. Les boutons sont empilés en pleine largeur pour
+/// être touchés au pouce sur un téléphone.
+class _DialogueAjout extends StatefulWidget {
+  const _DialogueAjout({
+    required this.nomFichier,
+    required this.taille,
+    required this.numero,
+    required this.statut,
+    required this.envoiPossible,
+    this.corrections,
+  });
+
+  /// Nom du fichier choisi.
+  final String nomFichier;
+
+  /// Taille du fichier, en octets.
+  final int taille;
+
+  /// Numéro que portera la nouvelle version.
+  final int numero;
+
+  /// Statut actuel du dossier.
+  final String statut;
+
+  /// Vrai si le fichier peut être envoyé à l'encadreur dans la foulée.
+  final bool envoiPossible;
+
+  /// Commentaire de l'encadreur qui demande des corrections, le cas échéant.
+  final String? corrections;
+
+  @override
+  State<_DialogueAjout> createState() => _DialogueAjoutState();
+}
+
+/// État de la fenêtre : le mot pour l'encadreur.
+class _DialogueAjoutState extends State<_DialogueAjout> {
+  final _message = TextEditingController();
+
+  @override
+  void dispose() {
+    _message.dispose();
+    super.dispose();
+  }
+
+  /// Vrai si l'étudiant renvoie une version corrigée.
+  bool get _correction => widget.statut == 'a_corriger';
+
+  /// Ce qui va se passer quand l'encadreur a déjà le rapport en main
+  /// (STA05 : une pièce acceptée n'est jamais remplacée en silence).
+  String? get _avertissement => switch (widget.statut) {
+    'valide' || 'recevable' =>
+      'Votre rapport a déjà été accepté : cette nouvelle version devra de '
+          'nouveau être examinée par votre encadreur.',
+    'soumis' =>
+      'Votre encadreur n’a pas encore répondu : il examinera cette version '
+          'à la place de l’ancienne.',
+    _ => null,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final avertissement = _avertissement;
+    final titre = !widget.envoiPossible
+        ? 'Ajouter cette nouvelle version ?'
+        : _correction
+        ? 'Renvoyer la version corrigée ?'
+        : 'Envoyer votre rapport ?';
+    return AlertDialog(
+      scrollable: true,
+      icon: const Icon(Icons.upload_file_rounded, color: AppColors.goldDeep, size: 34),
+      title: Text(titre, textAlign: TextAlign.center),
+      content: SizedBox(
+        width: 440,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Le fichier choisi : on vérifie d'un coup d'œil que c'est le bon.
+            _ApercuFichier(nom: widget.nomFichier, taille: widget.taille, numero: widget.numero),
+            if (widget.corrections != null) ...[
+              const SizedBox(height: 12),
+              _Citation(titre: 'Ce que votre encadreur a demandé', texte: widget.corrections!),
+            ],
+            if (avertissement != null) ...[
+              const SizedBox(height: 12),
+              Text(avertissement, style: const TextStyle(fontSize: 14, height: 1.45)),
+            ],
+            if (widget.envoiPossible) ...[
+              const SizedBox(height: 16),
+              TextField(
+                controller: _message,
+                minLines: 2,
+                maxLines: 4,
+                maxLength: _longueurMaxMessage,
+                decoration: InputDecoration(
+                  labelText: 'Message pour votre encadreur (facultatif)',
+                  hintText: _correction
+                      ? 'Ex. : j’ai complété la bibliographie et revu le chapitre 2.'
+                      : 'Ex. : voici mon rapport de stage.',
+                  alignLabelWithHint: true,
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            _GrosBouton(
+              !widget.envoiPossible
+                  ? 'Ajouter cette version'
+                  : _correction
+                  ? 'Renvoyer à mon encadreur'
+                  : 'Envoyer à mon encadreur',
+              icon: widget.envoiPossible ? Icons.send_rounded : Icons.upload_file_rounded,
+              variant: SgBtnVariant.primary,
+              onPressed: () =>
+                  Navigator.pop<_ChoixAjout>(context, (envoyer: widget.envoiPossible, message: _message.text.trim())),
+            ),
+            if (widget.envoiPossible) ...[
+              const SizedBox(height: 10),
+              _GrosBouton(
+                'Ajouter sans envoyer',
+                icon: Icons.save_alt_rounded,
+                variant: SgBtnVariant.outline,
+                onPressed: () => Navigator.pop<_ChoixAjout>(context, (envoyer: false, message: '')),
+              ),
+            ],
+            const SizedBox(height: 6),
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Annuler')),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Aperçu du fichier choisi : icône PDF, nom, numéro de version et taille.
+class _ApercuFichier extends StatelessWidget {
+  const _ApercuFichier({required this.nom, required this.taille, required this.numero});
+
+  final String nom;
+  final int taille;
+  final int numero;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceAlt,
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.picture_as_pdf_rounded, color: AppColors.goldDeep, size: 30),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  nom,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Deviendra la version $numero · ${_fmtTaille(taille)}',
+                  style: const TextStyle(fontSize: 12, color: AppColors.grey),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1471,6 +1898,7 @@ class _SuiviDossier extends StatefulWidget {
     required this.dossier,
     required this.role,
     required this.onLire,
+    this.onAjouter,
   });
 
   final DocumentService service;
@@ -1479,6 +1907,10 @@ class _SuiviDossier extends StatefulWidget {
 
   /// Lecture d'une version précise (identifiant, numéro).
   final void Function(int versionId, int numero) onLire;
+
+  /// Étudiant : ajout d'une version (corrigée), proposé sous la demande de
+  /// corrections de l'encadreur ; `null` pour les autres rôles.
+  final VoidCallback? onAjouter;
 
   @override
   State<_SuiviDossier> createState() => _SuiviDossierState();
@@ -1535,8 +1967,8 @@ class _SuiviDossierState extends State<_SuiviDossier> {
             else if (snapshot.data!.versions.isEmpty)
               _CadreVide(
                 _etudiant
-                    ? 'Vous n’avez encore déposé aucun rapport. Utilisez le bouton '
-                          '« Déposer mon rapport (PDF) » ci-dessus.'
+                    ? 'Vous n’avez encore déposé aucun rapport. Touchez '
+                          '« Ajouter mon rapport » en haut de la page.'
                     : 'Aucun rapport déposé pour le moment.',
               )
             else
@@ -1548,6 +1980,7 @@ class _SuiviDossierState extends State<_SuiviDossier> {
                   statutDossier: _statut(widget.dossier),
                   role: widget.role,
                   onLire: widget.onLire,
+                  onAjouter: widget.onAjouter,
                 ),
             const SizedBox(height: 28),
             const SgSectionTitle('Historique'),
@@ -1601,6 +2034,7 @@ class _CarteVersion extends StatelessWidget {
     required this.statutDossier,
     required this.role,
     required this.onLire,
+    this.onAjouter,
   });
 
   final Map<String, dynamic> version;
@@ -1619,6 +2053,17 @@ class _CarteVersion extends StatelessWidget {
   final String? role;
 
   final void Function(int versionId, int numero) onLire;
+
+  /// Étudiant : ajout de la version corrigée (`null` : pas de bouton).
+  final VoidCallback? onAjouter;
+
+  /// Vrai si l'encadreur a demandé des corrections sur CETTE version et
+  /// qu'aucune version corrigée n'a encore été ajoutée.
+  bool get _correctionsAttendues =>
+      derniere &&
+      statutDossier == 'a_corriger' &&
+      avis.isNotEmpty &&
+      avis.last['decision']?.toString() == 'defavorable';
 
   /// Situation d'une version SANS avis, en mots simples (ou `null`).
   (String, SgTone, IconData)? get _sansAvis {
@@ -1695,6 +2140,17 @@ class _CarteVersion extends StatelessWidget {
           for (final a in avis) ...[
             const SizedBox(height: 10),
             _ReponseEncadreur(avis: a),
+          ],
+          // Juste sous la demande de l'encadreur : de quoi y répondre.
+          if (onAjouter != null && _correctionsAttendues) ...[
+            const SizedBox(height: 12),
+            SgButton(
+              'Ajouter la version corrigée',
+              icon: Icons.upload_file_rounded,
+              variant: SgBtnVariant.outline,
+              expand: true,
+              onPressed: onAjouter,
+            ),
           ],
         ],
       ),
@@ -1778,7 +2234,7 @@ class _LigneHistorique extends StatelessWidget {
 
   /// Traduit un événement technique de l'historique en phrase simple.
   static String _evenementLisible(String evenement, String statutApres) => switch (evenement) {
-    'nouvelle_version' => 'Nouvelle version déposée',
+    'nouvelle_version' => 'Nouvelle version ajoutée',
     'soumettre' => 'Rapport envoyé à l’encadreur',
     'avis_favorable' => 'Rapport accepté par l’encadreur',
     'demander_correction' => 'Corrections demandées',
@@ -1963,6 +2419,7 @@ class _DialogueDecision extends StatefulWidget {
     this.champ,
     this.champObligatoire = false,
     this.exemple,
+    this.longueurMax,
   });
 
   final String titre;
@@ -1981,6 +2438,9 @@ class _DialogueDecision extends StatefulWidget {
 
   /// Exemple affiché dans le champ vide.
   final String? exemple;
+
+  /// Nombre maximal de caractères du champ (`null` : sans limite).
+  final int? longueurMax;
 
   @override
   State<_DialogueDecision> createState() => _DialogueDecisionState();
@@ -2027,6 +2487,7 @@ class _DialogueDecisionState extends State<_DialogueDecision> {
                 autofocus: widget.champObligatoire,
                 minLines: 2,
                 maxLines: 5,
+                maxLength: widget.longueurMax,
                 onChanged: (_) {
                   if (_erreur != null) setState(() => _erreur = null);
                 },
@@ -2133,10 +2594,10 @@ class _FolderDialogState extends State<_FolderDialog> {
               const SizedBox(height: 12),
               Text(
                 creation
-                    ? 'Étape suivante : déposer votre rapport au format PDF.'
+                    ? 'Étape suivante : ajouter votre rapport au format PDF.'
                     : 'Ceci change seulement l’entreprise et le sujet. Pour '
-                          'déposer un rapport, utilisez le bouton « Déposer » '
-                          'de la page.',
+                          'ajouter un rapport, utilisez le bouton « Ajouter » '
+                          'en haut de la page.',
                 style: const TextStyle(fontSize: 12, color: AppColors.grey, height: 1.35),
               ),
             ],

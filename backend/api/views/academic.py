@@ -143,9 +143,13 @@ class InternshipFolderViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def soumettre(self, request, pk=None):
-        """L'étudiant soumet son dossier (brouillon/à corriger → soumis)."""
+        """
+        L'étudiant soumet son dossier (brouillon/à corriger → soumis) ;
+        corps facultatif : {"motif": "message pour l'encadreur"}.
+        """
         dossier = self.get_object()
-        return self._repondre(dossiers.soumettre(dossier.pk, request.user))
+        message = request.data.get('motif') or ''
+        return self._repondre(dossiers.soumettre(dossier.pk, request.user, str(message)))
 
     @action(detail=True, methods=['post'])
     def autoriser(self, request, pk=None):

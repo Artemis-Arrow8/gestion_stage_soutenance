@@ -15,6 +15,7 @@ Map<String, dynamic> dossier(
   int? version,
   Map<String, dynamic>? avis,
   String? motif,
+  String? evenement,
 }) => {
   'id': 5,
   'status': statut,
@@ -24,14 +25,16 @@ Map<String, dynamic> dossier(
       ? null
       : {'id': 70 + version, 'version_number': version, 'uploaded_at': '2026-11-12T10:00:00Z'},
   'dernier_avis': avis,
-  'derniere_etape': motif == null ? null : {'statut_apres': statut, 'motif': motif},
+  'derniere_etape': motif == null
+      ? null
+      : {'evenement': evenement, 'statut_apres': statut, 'motif': motif},
 };
 
 void main() {
   group('étudiant', () {
     test('sans rapport : un seul bouton, « déposer »', () {
       final s = situationDossier('student', dossier('brouillon'));
-      expect(s.titre, 'Déposez votre rapport');
+      expect(s.titre, 'Ajoutez votre rapport');
       expect(s.actions, [ActionDossier.deposer]);
       expect(s.aTraiter, isTrue);
       expect(s.etape, 0);
@@ -131,6 +134,54 @@ void main() {
     for (final statut in ['brouillon', 'soumis', 'valide', 'recevable']) {
       expect(situationDossier('jury', dossier(statut, version: 1)).actions, isEmpty);
     }
+  });
+
+  group('bouton « Ajouter » de l’étudiant', () {
+    final avis = {'decision': 'defavorable', 'comments': 'Revoir le plan.', 'version_number': 1};
+
+    test('le libellé dit exactement ce que l’on ajoute', () {
+      expect(libelleAjout(dossier('brouillon')), 'Ajouter mon rapport');
+      expect(libelleAjout(dossier('a_corriger', version: 1, avis: avis)), 'Ajouter la version corrigée');
+      // Fichier ajouté mais pas encore envoyé : on le remplace.
+      expect(libelleAjout(dossier('brouillon', version: 1)), 'Remplacer par un autre fichier');
+      expect(libelleAjout(dossier('a_corriger', version: 2, avis: avis)), 'Remplacer par un autre fichier');
+      for (final statut in ['soumis', 'valide', 'recevable']) {
+        expect(libelleAjout(dossier(statut, version: 1)), 'Ajouter une nouvelle version', reason: statut);
+      }
+    });
+
+    test('l’envoi dans la foulée n’est proposé qu’en brouillon ou à corriger', () {
+      expect(envoiPossible(dossier('brouillon')), isTrue);
+      expect(envoiPossible(dossier('a_corriger', version: 1)), isTrue);
+      for (final statut in ['soumis', 'valide', 'recevable', 'rejete']) {
+        expect(envoiPossible(dossier(statut, version: 1)), isFalse, reason: statut);
+      }
+    });
+
+    test('le dépôt reste possible partout, sauf dossier refusé', () {
+      for (final statut in ['brouillon', 'a_corriger', 'soumis', 'valide', 'recevable']) {
+        expect(peutDeposer('student', dossier(statut, version: 1)), isTrue, reason: statut);
+      }
+      expect(peutDeposer('student', dossier('rejete')), isFalse);
+      expect(peutDeposer('supervisor', dossier('brouillon')), isFalse);
+    });
+
+    test('l’accueil donne la prochaine étape en mots d’action', () {
+      expect(boutonAccueilEtudiant(dossier('brouillon')), 'Ajouter mon rapport');
+      expect(boutonAccueilEtudiant(dossier('brouillon', version: 1)), 'Envoyer mon rapport');
+      expect(boutonAccueilEtudiant(dossier('a_corriger', version: 1, avis: avis)), 'Corriger mon rapport');
+      expect(boutonAccueilEtudiant(dossier('a_corriger', version: 2, avis: avis)), 'Renvoyer ma version corrigée');
+      expect(boutonAccueilEtudiant(dossier('soumis', version: 1)), isNull);
+    });
+  });
+
+  test('le mot de l’étudiant n’est montré que tant que le rapport attend l’avis', () {
+    final envoye = dossier('soumis', version: 2, motif: ' J’ai repris le chapitre 2. ', evenement: 'soumettre');
+    expect(messageEtudiant(envoye), 'J’ai repris le chapitre 2.');
+    // Une autre étape (réouverture, nouvelle version…) n'est pas un message.
+    expect(messageEtudiant(dossier('soumis', version: 2, motif: 'Erreur', evenement: 'rouvrir')), isNull);
+    expect(messageEtudiant(dossier('valide', version: 2, motif: 'Bien', evenement: 'soumettre')), isNull);
+    expect(messageEtudiant(dossier('soumis', version: 2, motif: '  ', evenement: 'soumettre')), isNull);
   });
 
   test('seul un avis défavorable commenté est cité', () {

@@ -6,7 +6,7 @@
 ///   2. une grille de grandes cartes « Vos espaces » : une carte par module,
 ///      avec une information en direct ; toucher la carte ouvre le module.
 /// Ce qui attend l'utilisateur est dit en toutes lettres avec un bouton
-/// (« 3 rapports attendent votre avis », « Déposez votre rapport ») : les
+/// (« 3 rapports attendent votre avis », « Ajouter mon rapport ») : les
 /// règles viennent de `core/utils/etapes_dossier.dart`, comme dans l'écran
 /// des dossiers, pour que l'accueil et l'écran disent la même chose.
 /// Pas de tableaux ni de listes entassées : le détail se trouve dans chaque
@@ -195,9 +195,6 @@ class _EtatAccueil {
     aTraiter = dossiers == null
         ? 0
         : dossiers!.where((d) => situationDossier(auth.role, d).aTraiter).length;
-    situationEtudiant = auth.role == 'student' && (dossiers?.isNotEmpty ?? false)
-        ? situationDossier('student', dossiers!.first)
-        : null;
   }
 
   /// Dossiers de stage visibles, ou `null` s'ils ne sont pas chargés.
@@ -205,9 +202,6 @@ class _EtatAccueil {
 
   /// Nombre de dossiers qui attendent une action de l'utilisateur.
   late final int aTraiter;
-
-  /// Étudiant : situation de son dossier (prochaine étape), sinon `null`.
-  late final SituationDossier? situationEtudiant;
 
   /// Session courante (rôle, profil).
   final AuthProvider auth;
@@ -325,21 +319,26 @@ class _CarteUne extends StatelessWidget {
         ? '--:--'
         : '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
     final note = s?['final_average']?.toString();
-    // Prochaine étape du dossier, dite en toutes lettres sur un bouton.
-    final situation = etat.situationEtudiant;
+    // Prochaine étape du dossier, dite en mots d'action sur un bouton or
+    // (« Ajouter mon rapport », « Corriger mon rapport »…) ; sans étape à
+    // faire, un bouton discret mène quand même au rapport : l'étudiant n'a
+    // jamais à chercher où ajouter un document.
+    final dossiers = etat.dossiers;
+    final prochaine = dossiers == null || dossiers.isEmpty
+        ? null
+        : boutonAccueilEtudiant(dossiers.first);
 
     return _CadreUne(
       surtitre: 'MON STAGE',
       titre: user['folder_company']?.toString() ?? 'Mon dossier',
       texte: user['folder_subject']?.toString() ?? '',
       onTap: () => navigateToSection(context, AppSection.profil),
-      action: situation != null && situation.aTraiter
-          ? SgButton(
-              situation.titre,
-              icon: Icons.arrow_forward_rounded,
-              onPressed: () => navigateToSection(context, AppSection.documents),
-            )
-          : null,
+      action: SgButton(
+        prochaine ?? 'Voir mon rapport',
+        icon: prochaine == null ? Icons.description_outlined : Icons.arrow_forward_rounded,
+        variant: prochaine == null ? SgBtnVariant.outline : SgBtnVariant.primary,
+        onPressed: () => navigateToSection(context, AppSection.documents),
+      ),
       pastilles: [
         SgStatusBadge(statut),
         if (note != null)

@@ -7,7 +7,9 @@
 library;
 
 import 'dart:convert';
+import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gestion_stage_soutenance/app.dart';
 import 'package:gestion_stage_soutenance/core/network/api_service.dart';
@@ -22,10 +24,21 @@ import 'package:material_ui/material_ui.dart';
 void main() {
   setUp(PlanningStore.clear);
 
+  // Le sélecteur de fichier natif est remplacé par un faux qui « choisit »
+  // aussitôt un petit PDF (le canal natif n'existe pas en test).
+  final selecteurNatif = FilePickerPlatform.instance;
+  setUp(() => FilePickerPlatform.instance = _FauxSelecteur());
+  tearDown(() => FilePickerPlatform.instance = selecteurNatif);
+
   testWidgets('encadreur : de l’accueil à « demander des corrections »', (
     WidgetTester tester,
   ) async {
-    final serveur = _Serveur(role: 'supervisor', statut: 'soumis', version: 2);
+    final serveur = _Serveur(
+      role: 'supervisor',
+      statut: 'soumis',
+      version: 2,
+      messageEnvoi: 'J’ai repris le chapitre 2.',
+    );
     await _ouvrir(tester, serveur);
 
     // L'accueil dit combien de rapports attendent, avec un bouton.
@@ -39,6 +52,9 @@ void main() {
     expect(find.text('Accepter le rapport'), findsOneWidget);
     expect(find.text('Demander des corrections'), findsOneWidget);
     expect(find.text('Autoriser la soutenance'), findsNothing);
+    // Le mot laissé par l'étudiant en envoyant son rapport.
+    expect(find.text('Message de l’étudiant'), findsOneWidget);
+    expect(find.text('« J’ai repris le chapitre 2. »'), findsOneWidget);
 
     // Commentaire obligatoire : sans texte, rien ne part.
     await _toucher(tester, 'Demander des corrections');
@@ -82,36 +98,90 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('étudiant sans rapport : un seul bouton, « déposer »', (
+  testWidgets('étudiant sans rapport : « Ajouter mon rapport », puis l’envoyer d’un geste', (
     WidgetTester tester,
   ) async {
     final serveur = _Serveur(role: 'student', statut: 'brouillon');
     await _ouvrir(tester, serveur);
 
-    // L'accueil donne la prochaine étape en toutes lettres.
-    await _toucher(tester, 'Déposez votre rapport');
+    // L'accueil donne la prochaine étape en mots d'action.
+    await _toucher(tester, 'Ajouter mon rapport');
 
+    // La grande zone « Ajouter » est en haut de la page, seule.
     expect(find.text('Mon rapport de stage'), findsOneWidget);
-    expect(find.text('Déposer mon rapport (PDF)'), findsOneWidget);
-    // Rien à envoyer ni à lire tant qu'aucun rapport n'est déposé.
+    expect(find.text('Ajouter mon rapport'), findsOneWidget);
+    expect(find.text('Fichier PDF · 10 Mo maximum'), findsOneWidget);
+    // Rien à envoyer ni à lire tant qu'aucun rapport n'est ajouté.
     expect(find.text('Envoyer à mon encadreur'), findsNothing);
-    expect(find.textContaining('Lire le rapport'), findsNothing);
-    // Le bouton de dépôt n'est pas répété en double.
-    expect(find.text('Déposer une nouvelle version'), findsNothing);
+    expect(find.textContaining('Relire mon rapport'), findsNothing);
+    expect(find.text('Ajouter une nouvelle version'), findsNothing);
+
+    // Un toucher : le fichier est choisi, UNE fenêtre propose de l'envoyer.
+    await _toucher(tester, 'Ajouter mon rapport');
+    expect(find.text('Envoyer votre rapport ?'), findsOneWidget);
+    expect(find.text('rapport_stage.pdf'), findsOneWidget);
+    expect(find.textContaining('Deviendra la version 1'), findsOneWidget);
+    expect(find.text('Ajouter sans envoyer'), findsOneWidget);
+
+    await _toucher(tester, 'Envoyer à mon encadreur');
+    // Le fichier part, puis l'envoi, sans message (champ laissé vide).
+    expect(serveur.ecritures.map((e) => e.$1), [
+      '/api/documents/upload/',
+      '/api/internship-folders/5/soumettre/',
+    ]);
+    expect(serveur.ecritures.last.$2, isEmpty);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('étudiant : déposer reste visible, versions et stage sont séparés', (
+  testWidgets('étudiant : corrections demandées → ajouter la version corrigée et la renvoyer', (
+    WidgetTester tester,
+  ) async {
+    final serveur = _Serveur(
+      role: 'student',
+      statut: 'a_corriger',
+      version: 1,
+      corrections: 'Revoir le chapitre 2.',
+    );
+    await _ouvrir(tester, serveur);
+    await _toucher(tester, 'Corriger mon rapport');
+
+    // Ce que l'encadreur demande, et de quoi y répondre, en haut de page.
+    expect(find.text('Corrections demandées'), findsOneWidget);
+    expect(find.text('Ce que votre encadreur demande'), findsOneWidget);
+    expect(find.text('« Revoir le chapitre 2. »'), findsWidgets);
+    // La zone en haut ET le bouton sous la demande, dans « Mes rapports ».
+    expect(find.text('Ajouter la version corrigée'), findsNWidgets(2));
+    // L'ancienne version n'est plus « à envoyer » : on attend la corrigée.
+    expect(find.text('Envoyer à mon encadreur'), findsNothing);
+
+    await _toucher(tester, 'Ajouter la version corrigée');
+    expect(find.text('Renvoyer la version corrigée ?'), findsOneWidget);
+    expect(find.text('Ce que votre encadreur a demandé'), findsOneWidget);
+    expect(find.textContaining('Deviendra la version 2'), findsOneWidget);
+
+    // Un mot pour l'encadreur, puis « Renvoyer » : tout part d'un coup.
+    await tester.enterText(find.byType(TextField), 'J’ai repris le chapitre 2.');
+    await _toucher(tester, 'Renvoyer à mon encadreur');
+    expect(serveur.ecritures.map((e) => e.$1), [
+      '/api/documents/upload/',
+      '/api/internship-folders/5/soumettre/',
+    ]);
+    expect(serveur.ecritures.last.$2, {'motif': 'J’ai repris le chapitre 2.'});
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('étudiant : « Ajouter » reste visible, versions et stage sont séparés', (
     WidgetTester tester,
   ) async {
     final serveur = _Serveur(role: 'student', statut: 'soumis', version: 1);
     await _ouvrir(tester, serveur);
-    await _toucher(tester, 'Mon dossier et mes documents');
+    // Rien à faire : l'accueil mène quand même au rapport.
+    await _toucher(tester, 'Voir mon rapport');
 
-    // 1. Où en est le rapport, avec le dépôt TOUJOURS à portée de main
-    //    (sans passer par « Modifier » ni ouvrir un panneau).
+    // 1. Où en est le rapport, avec l'ajout TOUJOURS à portée de main
+    //    (sans passer par « Modifier », « Historique » ni un panneau).
     expect(find.text('Rapport envoyé'), findsOneWidget);
-    expect(find.text('Déposer une nouvelle version'), findsOneWidget);
+    expect(find.text('Ajouter une nouvelle version'), findsOneWidget);
     expect(find.text('Relire mon rapport (version 1)'), findsOneWidget);
 
     // 2. Ses rapports déposés, avec ce qu'en fait l'encadreur.
@@ -127,10 +197,14 @@ void main() {
     expect(find.text('Modifier l’entreprise ou le sujet'), findsOneWidget);
     expect(find.text('Modifier'), findsNothing);
 
-    // Déposer pendant la lecture de l'encadreur : on prévient d'abord.
-    await _toucher(tester, 'Déposer une nouvelle version');
-    expect(find.text('Déposer une nouvelle version ?'), findsOneWidget);
+    // Ajouter pendant la lecture de l'encadreur : la fenêtre prévient, et
+    // ne propose pas de « renvoyer » (le rapport est déjà chez lui).
+    await _toucher(tester, 'Ajouter une nouvelle version');
+    expect(find.text('Ajouter cette nouvelle version ?'), findsOneWidget);
     expect(find.textContaining('à la place de l’ancienne'), findsOneWidget);
+    expect(find.text('Ajouter sans envoyer'), findsNothing);
+    await _toucher(tester, 'Ajouter cette version');
+    expect(serveur.ecritures.map((e) => e.$1), ['/api/documents/upload/']);
     expect(tester.takeException(), isNull);
   });
 
@@ -219,7 +293,13 @@ Future<void> _toucher(WidgetTester tester, String texte) async {
 
 /// Faux serveur SGSUS : un seul dossier (n° 5) dans l'état voulu.
 class _Serveur {
-  _Serveur({required this.role, required this.statut, this.version});
+  _Serveur({
+    required this.role,
+    required this.statut,
+    this.version,
+    this.corrections,
+    this.messageEnvoi,
+  });
 
   /// Rôle du compte connecté.
   final String role;
@@ -229,6 +309,13 @@ class _Serveur {
 
   /// Numéro de la dernière version déposée (`null` : aucun dépôt).
   final int? version;
+
+  /// Commentaire de l'encadreur qui demande des corrections sur la
+  /// dernière version (`null` : aucun avis).
+  final String? corrections;
+
+  /// Mot laissé par l'étudiant en envoyant son rapport (`null` : aucun).
+  final String? messageEnvoi;
 
   /// Écritures reçues : (chemin, corps JSON).
   final List<(String, Map<String, dynamic>)> ecritures = [];
@@ -259,9 +346,36 @@ class _Serveur {
     'derniere_version': version == null
         ? null
         : {'id': 70 + version!, 'version_number': version, 'uploaded_at': '2026-11-12T10:00:00Z'},
-    'dernier_avis': null,
-    'derniere_etape': null,
+    'dernier_avis': corrections == null
+        ? null
+        : {
+            'decision': 'defavorable',
+            'comments': corrections,
+            'author_role': 'encadreur',
+            'version_number': version,
+            'created_at': '2026-11-13T09:00:00Z',
+          },
+    'derniere_etape': messageEnvoi == null
+        ? null
+        : {
+            'evenement': 'soumettre',
+            'statut_apres': statut,
+            'motif': messageEnvoi,
+            'created_at': '2026-11-12T10:05:00Z',
+          },
   };
+
+  /// Avis visibles : la demande de corrections sur la dernière version.
+  List<Map<String, dynamic>> get _avis => [
+    if (corrections != null)
+      {
+        'id': 1,
+        'document_version': 70 + version!,
+        'decision': 'defavorable',
+        'comments': corrections,
+        'created_at': '2026-11-13T09:00:00Z',
+      },
+  ];
 
   /// Versions déposées du dossier n° 5.
   List<Map<String, dynamic>> get _versions => [
@@ -304,8 +418,13 @@ class _Serveur {
   Future<http.Response> _repondre(http.Request requete) async {
     final chemin = requete.url.path;
     final ecriture = requete.method == 'POST' && !chemin.endsWith('/login/');
+    // Un dépôt de fichier arrive en multipart : on note seulement le chemin.
+    final multipart = requete.headers['content-type']?.startsWith('multipart/') ?? false;
     if (ecriture) {
-      ecritures.add((chemin, requete.body.isEmpty ? {} : jsonDecode(requete.body) as Map<String, dynamic>));
+      ecritures.add((
+        chemin,
+        multipart || requete.body.isEmpty ? {} : jsonDecode(requete.body) as Map<String, dynamic>,
+      ));
     }
     final Object? corps = switch (chemin) {
       '/api/login/' => {'access': 'a', 'refresh': 'r', 'user': _profil},
@@ -313,9 +432,11 @@ class _Serveur {
       '/api/internship-folders/' => [_dossier],
       '/api/document-versions/' => _versions,
       '/api/internship-folders/5/historique/' => _historique,
-      '/api/reviews/' when !ecriture => <Object>[],
+      '/api/reviews/' when !ecriture => _avis,
       '/api/reviews/' => {'id': 1, 'decision': 'defavorable'},
       '/api/internship-folders/5/autoriser/' => _dossier,
+      '/api/internship-folders/5/soumettre/' => _dossier,
+      '/api/documents/upload/' => {'id': 80, 'folder': 5, 'version_number': (version ?? 0) + 1},
       '/api/soutenances/planning/' => _planning,
       '/api/salles/' || '/api/jurys/' => [],
       _ => null,
@@ -323,7 +444,7 @@ class _Serveur {
     if (corps == null) return http.Response('{"detail":"Introuvable."}', 404);
     return http.Response(
       jsonEncode(corps),
-      requete.method == 'POST' && chemin == '/api/reviews/' ? 201 : 200,
+      requete.method == 'POST' && (chemin == '/api/reviews/' || chemin == '/api/documents/upload/') ? 201 : 200,
       headers: {'content-type': 'application/json; charset=utf-8'},
     );
   }
@@ -351,4 +472,50 @@ class _StockageMemoire implements AuthStorage {
     _acces = null;
     _renouvellement = null;
   }
+}
+
+/// Faux sélecteur de fichier : « choisit » aussitôt un petit PDF.
+class _FauxSelecteur extends FilePickerPlatform {
+  @override
+  Future<PlatformFile?> pickFile({
+    String? dialogTitle,
+    String? initialDirectory,
+    FileType type = FileType.any,
+    List<String>? allowedExtensions,
+    Function(FilePickerStatus)? onFileLoading,
+    int compressionQuality = 0,
+    AndroidOptions androidOptions = const AndroidOptions(),
+    DarwinOptions darwinOptions = const DarwinOptions(),
+    WindowsOptions windowsOptions = const WindowsOptions(),
+    LinuxOptions linuxOptions = const LinuxOptions(),
+    WebOptions webOptions = const WebOptions(),
+  }) async => _FauxPdf();
+}
+
+/// Petit fichier PDF en mémoire.
+final class _FauxPdf extends PlatformFile {
+  /// Contenu : l'en-tête d'un PDF suffit (le serveur est simulé).
+  static final _octets = Uint8List.fromList(utf8.encode('%PDF-1.4 rapport de test'));
+
+  @override
+  String get name => 'rapport_stage.pdf';
+
+  @override
+  Uri get uri => Uri.parse('memoire:///rapport_stage.pdf');
+
+  /// Inutile pour ces tests (le dépôt lit les octets directement).
+  @override
+  Never get xFile => throw UnimplementedError('Inutile pour ces tests.');
+
+  @override
+  int? lengthSync() => _octets.length;
+
+  @override
+  Future<int?> length() async => _octets.length;
+
+  @override
+  Future<Uint8List> readAsBytes() async => _octets;
+
+  @override
+  Stream<Uint8List> readAsByteStream() => Stream.value(_octets);
 }

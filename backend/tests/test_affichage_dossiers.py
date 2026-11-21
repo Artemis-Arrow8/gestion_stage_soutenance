@@ -144,6 +144,34 @@ def test_motif_du_refus_visible_par_l_etudiant():
     assert etape["motif"] == "Stage hors période."
 
 
+def test_message_de_l_etudiant_lu_par_l_encadreur(stockage):
+    """
+    En renvoyant sa version corrigée, l'étudiant peut écrire un mot à son
+    encadreur (« ce que j'ai corrigé ») : l'encadreur le lit dans la liste.
+    Le message reste facultatif et borné en longueur.
+    """
+    dossier = creer_dossier("brouillon")
+    etudiant = client_de(compte_etudiant(dossier))
+    encadreur = client_de(affecter_encadreur(dossier))
+    assert deposer(etudiant, dossier).status_code == 201
+
+    # Message trop long : refusé, le dossier ne bouge pas.
+    reponse = etudiant.post(f"/api/internship-folders/{dossier.pk}/soumettre/",
+                            {"motif": "x" * 1001}, format="json")
+    assert reponse.status_code == 400, reponse.content
+    dossier.refresh_from_db()
+    assert dossier.status == "brouillon"
+
+    # Message normal : espaces superflus retirés, visible par l'encadreur.
+    reponse = etudiant.post(f"/api/internship-folders/{dossier.pk}/soumettre/",
+                            {"motif": "  J'ai repris le chapitre 2.  "}, format="json")
+    assert reponse.status_code == 200, reponse.content
+    etape = dossier_liste(encadreur, dossier)["derniere_etape"]
+    assert etape["evenement"] == "soumettre"
+    assert etape["statut_apres"] == "soumis"
+    assert etape["motif"] == "J'ai repris le chapitre 2."
+
+
 def test_nombre_de_requetes_constant():
     """Lister 2 ou 6 dossiers coûte le même nombre de requêtes SQL."""
     administrateur = client_de(creer_compte("admin"))

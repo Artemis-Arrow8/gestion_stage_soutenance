@@ -144,10 +144,20 @@ def _changer_etat(dossier, nouvel_etat, evenement, acteur, motif='', version=Non
 # Événements
 # ---------------------------------------------------------------------------
 
+# Longueur maximale du message facultatif joint à un envoi (soumettre).
+LONGUEUR_MAX_MESSAGE = 1000
+
+
 @transaction.atomic
-def soumettre(dossier_id, acteur):
+def soumettre(dossier_id, acteur, message=''):
     """
     L'étudiant soumet son dossier (brouillon ou à corriger → soumis).
+
+    Paramètres :
+        message (str) : mot facultatif pour l'encadreur (ex. « J'ai repris le
+            chapitre 2 »). Il est conservé comme motif de l'étape dans
+            l'historique, et donc lisible par l'encadreur dans
+            `derniere_etape` tant qu'aucune autre étape ne le remplace.
 
     Lève :
         PermissionDenied : l'appelant n'est pas l'étudiant propriétaire ;
@@ -165,7 +175,14 @@ def soumettre(dossier_id, acteur):
             regle='F02',
             details={'dossier': dossier.pk},
         )
-    return _changer_etat(dossier, SOUMIS, 'soumettre', acteur, version=version)
+    # Message facultatif : espaces superflus retirés, longueur bornée.
+    message = (message or '').strip()
+    if len(message) > LONGUEUR_MAX_MESSAGE:
+        raise ValidationError({
+            'motif': f'Le message ne doit pas dépasser {LONGUEUR_MAX_MESSAGE} caractères.',
+        })
+    return _changer_etat(dossier, SOUMIS, 'soumettre', acteur,
+                         motif=message, version=version)
 
 
 @transaction.atomic
